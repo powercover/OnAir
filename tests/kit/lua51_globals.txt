@@ -116,3 +116,7 @@ tostring
 type
 unpack
 wipe
+GetMouseFoci
+GetMouseFocus
+IsMouseButtonDown
+IsMouselooking

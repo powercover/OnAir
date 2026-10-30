@@ -1300,7 +1300,14 @@ local function BuildCamera()
         end)
     flow.Add(focus, TILE_H, 24)
 
-    flow.Heading(L["Orbit"], L["A slow turn around your character for intros and outros. Stops when combat starts. Key binding: OnAir > Camera orbit."])
+    flow.Heading(L["Orbit"], L["A slow turn around your character for intros and outros. Stops when combat starts. On the Deck: left click orbits left, right click orbits right, the same click again or a middle click stops. Key binding: OnAir > Camera orbit."])
+    local orbitDir = Kit.Segmented(body, { { value = "left", text = L["Turn left"] }, { value = "right", text = L["Turn right"] } }, 240,
+        function() return cam.orbitDir or "left" end,
+        function(v)
+            Camera.SetOrbitDirection(v)
+            UI.Refresh()
+        end)
+    flow.Add(orbitDir, 26, 14)
     local orbit = Kit.Button(body, L["Start orbit"], 150, 30, "ghost", function()
         Camera.ToggleOrbit()
     end)
@@ -1310,6 +1317,15 @@ local function BuildCamera()
         function(v) Camera.SetOrbitSpeed(v) end,
         function(v) return string.format("%d%%", v * 100) end)
     orbitSpeed:SetPoint("LEFT", orbit, "RIGHT", 30, 4)
+
+    cam.orbitStop = cam.orbitStop or { move = true, mouse = true }
+    local stopMove = Tile(body, "Orbit", L["Stop when I move"], L["Walking, jumping or turning ends the orbit."],
+        function() return cam.orbitStop.move == true end, function(v) cam.orbitStop.move = v end)
+    local stopMouse = Tile(body, "Camera", L["Stop when I grab the camera"], L["Turning the camera with the mouse ends the orbit."],
+        function() return cam.orbitStop.mouse == true end, function(v) cam.orbitStop.mouse = v end)
+    flow.Add(stopMove, 0, 0)
+    stopMouse:SetPoint("TOPLEFT", stopMove, "TOPRIGHT", 12, 0)
+    flow.Space(TILE_H + 24)
 
     local reset = Kit.Button(body, L["Back to game defaults"], 200, 30, "ghost", function()
         Camera.UsePreset("default")
@@ -1333,6 +1349,7 @@ local function BuildCamera()
             slider:SetEnabledLook(Camera.Exists(slider.cvar))
         end
         orbitSpeed:Refresh()
+        orbitDir:Refresh(true)
         orbit.label:SetText(Camera.IsOrbiting() and L["Stop orbit"] or L["Start orbit"])
         local live = cam.mode ~= "off"
         presets:SetAlpha(live and 1 or 0.6)

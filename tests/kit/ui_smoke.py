@@ -214,6 +214,13 @@ C_CVar = { _v = {}, GetCVar = function(k) return C_CVar._v[k] or CVAR_DEFAULTS[k
 ORBIT = 0
 function MoveViewLeftStart(speed) ORBIT = speed end
 function MoveViewLeftStop() ORBIT = 0 end
+ORBIT_R = 0
+function MoveViewRightStart(speed) ORBIT_R = speed end
+function MoveViewRightStop() ORBIT_R = 0 end
+MOUSELOOK = false
+function IsMouselooking() return MOUSELOOK end
+function IsMouseButtonDown() return false end
+function GetMouseFoci() return {} end
 C_AddOns = { GetAddOnMetadata = function() return "0.1.0" end }
 C_NamePlate = { GetNamePlates = function() return { { namePlateUnitToken = "nameplate1", UnitFrame = { name = UIParent:CreateFontString() } } } end,
   GetNamePlateForUnit = function() return { UnitFrame = { name = UIParent:CreateFontString() } } end }
@@ -241,6 +248,16 @@ Constants = { CharacterNameSeparatorConsts = { CHARACTERNAME_SURNAME_SEPARATOR =
 
 DRIVE = r"""
 local OA = ...
+-- Runs every OnUpdate (tweens, watchers) for a while, 50 ms a frame.
+local function run(seconds)
+  for _ = 1, math.ceil(seconds / 0.05) do
+    for _, f in ipairs(FRAMES) do
+      local fn = f._scripts and f._scripts.OnUpdate
+      if fn then fn(f, 0.05) end
+    end
+  end
+end
+
 local function fire(event, ...)
   for _, f in ipairs(FRAMES) do
     if f._events and f._events[event] and f._scripts and f._scripts.OnEvent then
@@ -338,7 +355,7 @@ assert(C_CVar.GetCVar("cameraFov") == "75", "fov applied")
 assert(C_CVar.GetCVar("CameraKeepCharacterCentered") == "0", "centering off for the shoulder offset")
 OA.Camera.Set("fov", 60)
 assert(C_CVar.GetCVar("cameraFov") == "60", "slider applied")
-OA.Camera.ToggleOrbit(); assert(ORBIT > 0, "orbiting"); OA.Camera.ToggleOrbit(); assert(ORBIT == 0, "orbit stopped")
+OA.Camera.ToggleOrbit(); assert(ORBIT + ORBIT_R > 0, "orbiting"); OA.Camera.ToggleOrbit(); assert(ORBIT + ORBIT_R == 0, "orbit stopped")
 cam.mode = "live"; OA.Camera.Update()
 assert(C_CVar.GetCVar("cameraFov") == "90", "live mode, not live: restored")
 OA.GoLive(); assert(C_CVar.GetCVar("cameraFov") == "60", "live mode, live: applied")
@@ -461,6 +478,8 @@ local function at(left, bottom) piece.GetLeft = function() return left end; piec
 at(905, 300); local x1, _, gx1 = OA.Layout.SnapPosition(piece)
 at(294, 300); local x2, _, gx2 = OA.Layout.SnapPosition(piece)
 at(301, 300); local x3, _, gx3 = OA.Layout.SnapPosition(piece)
+at(858, 300); local x4, _, gx4, _, k4 = OA.Layout.SnapPosition(piece)
+SNAP_RIGHT_CENTER = (x4 == 860 and gx4 == 960 and k4 == "center")
 SNAP_CENTER = (x1 == 910 and gx1 == 960)
 SNAP_GRID = (x2 == 288 and gx2 == 288)
 SNAP_FREE = (x3 == 300 and gx3 == nil)
@@ -472,7 +491,41 @@ OA.Layout.Start()
 local doneButton
 for _, c in ipairs(OnAirLayoutBar._children) do if c._kind == "Button" then doneButton = c end end
 doneButton:Click("LeftButton"); doneButton:Click("LeftButton")
+run(1)
 DONE_OK = (not OA.Layout.IsEditing()) and OnAirConsole:IsShown() and not OnAirLayoutBar:IsShown()
+
+-- a piece's middle lines up with another piece's left side; Shift drops freely
+local other = CreateFrame("Frame", nil, UIParent); other._w, other._h = 100, 20
+other.GetLeft = function() return 500 end; other.GetBottom = function() return 700 end
+OA.Layout.Register("probe", other, "Probe", {})
+at(452, 300); local x5, _, gx5, _, k5 = OA.Layout.SnapPosition(piece)
+SNAP_PIECE = (x5 == 450 and gx5 == 500 and k5 == "piece")
+IsShiftKeyDown = function() return true end
+at(301, 300); local x6, _, gx6 = OA.Layout.SnapPosition(piece)
+SNAP_SHIFT = (x6 == 301 and gx6 == nil)
+IsShiftKeyDown = function() return false end
+-- opening and closing again animate to the end without leftovers
+OA.Layout.Start(); run(1)
+local opened = OnAirLayoutBar:IsShown() and OnAirLayoutBar:GetAlpha() == 1
+OA.Layout.Stop(); run(1)
+LAYOUT_ANIM = opened and not OnAirLayoutBar:IsShown() and not OA.Layout.IsEditing()
+
+-- orbit: either way round, the Deck's clicks, stopping on movement and on the mouse
+local orbitSpec
+for _, spec in ipairs(OA.Deck.BUTTONS) do if spec.key == "orbit" then orbitSpec = spec end end
+orbitSpec.click("RightButton"); local r1 = ORBIT_R > 0 and ORBIT == 0
+orbitSpec.click("LeftButton"); local r2 = ORBIT > 0 and ORBIT_R == 0
+orbitSpec.click("LeftButton"); local r3 = ORBIT == 0 and not OA.Camera.IsOrbiting()
+orbitSpec.click("RightButton"); orbitSpec.click("MiddleButton"); local r4 = ORBIT_R == 0
+ORBIT_CLICKS = r1 and r2 and r3 and r4
+OA.Camera.StartOrbit("left"); fire("PLAYER_STARTED_MOVING"); local m1 = OA.Camera.IsOrbiting() -- in the grace time
+run(0.5); fire("PLAYER_STARTED_MOVING"); local m2 = not OA.Camera.IsOrbiting()
+OA.Camera.StartOrbit("left"); run(0.5); MOUSELOOK = true; run(0.1); MOUSELOOK = false
+local m3 = not OA.Camera.IsOrbiting()
+OA.db.camera.orbitStop.move = false
+OA.Camera.StartOrbit("right"); run(0.5); fire("PLAYER_STARTED_MOVING"); local m4 = OA.Camera.IsOrbiting()
+OA.Camera.StopOrbit(); OA.db.camera.orbitStop.move = true
+ORBIT_STOPS = m1 and m2 and m3 and m4
 OA.EndLive()
 """
 
@@ -508,7 +561,8 @@ def run(toc):
                               "SHIELD_REPLY", "ZONE_TEXT", "HELD_BEFORE_END", "HELD_AFTER_END", "PREVIEW_TEXT",
                               "NPC_GENERIC", "NPC_AFTER_RESET", "NPC_BOSS", "NPC_HIDDEN_ALPHA", "NPC_CVAR",
                               "DECK_UI_HIDDEN", "DECK_STAYS", "LAYOUT_ON", "SNAP_CENTER", "SNAP_GRID",
-                              "SNAP_FREE", "DONE_OK")}
+                              "SNAP_FREE", "DONE_OK", "SNAP_RIGHT_CENTER", "SNAP_PIECE",
+                              "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS")}
 
 
 if __name__ == "__main__":
@@ -549,6 +603,12 @@ if __name__ == "__main__":
                     (results["SNAP_GRID"], "snaps an edge to a grid line"),
                     (results["SNAP_FREE"], "off the lines: 4 px steps"),
                     (results["DONE_OK"], "Done leaves edit layout (also during a preview)"),
+                    (results["SNAP_RIGHT_CENTER"], "a right side snaps onto the center line"),
+                    (results["SNAP_PIECE"], "a middle snaps onto another piece's side"),
+                    (results["SNAP_SHIFT"], "Shift drops freely"),
+                    (results["LAYOUT_ANIM"], "edit layout animates in and out"),
+                    (results["ORBIT_CLICKS"], "orbit: left / right / again / middle on the Deck"),
+                    (results["ORBIT_STOPS"], "orbit stops on movement and the mouse (when set)"),
                 ]
                 for ok, what in checks:
                     print(f"  {'ok  ' if ok else 'FAIL'} {what}")

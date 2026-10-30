@@ -1,8 +1,10 @@
 local _, OA = ...
 
 -- Edit layout: a grid over the screen, and everything OnAir puts on it (the ON AIR badge, the
--- stream chat, the Deck) unlocked and outlined so it can be dragged into place. Drops snap to the
--- grid. Done (or Esc) puts the console back.
+-- stream chat, the Deck) unlocked and outlined so it can be dragged into place. Drops snap: any
+-- side or the middle of a piece onto a guide (the screen's center lines and edges, the sides and
+-- middles of the other pieces), its sides onto the grid. Shift drops freely. Done (or Esc) puts
+-- the console back.
 OA.Layout = {}
 
 local Layout = OA.Layout
@@ -12,12 +14,17 @@ local L = OA.L
 local Utils = OA.Utils
 
 local GRID = 32
-local RANGE = 12     -- how close (in UI pixels) a center or an edge is pulled onto a line
+local RANGE = 12     -- how close (in UI pixels) an anchor is pulled onto a guide
+local GRID_RANGE = 8 -- ... and a side onto a grid line
 local STEP = 4       -- off the lines, positions round to this
+local GRID_ALPHA = 0.07
+local SHADE_ALPHA = 0.35
 
 local editing = false
 local movers = {}
-local grid, bar
+local grid, bar, shade
+local lines = {}     -- grid lines: { tex, distance from the center }
+local centerX, centerY
 local guideX, guideY
 local dragging
 local consoleWasOpen = false
@@ -39,9 +46,9 @@ local function BuildGrid()
     local w, h = UIParent:GetWidth(), UIParent:GetHeight()
     local cx, cy = w / 2, h / 2
     -- Lines out from the center, so the center lines sit exactly in the middle.
-    local function Line(vertical, offset, color, alpha)
+    local function Line(vertical, offset)
         local t = grid:CreateTexture(nil, "ARTWORK")
-        t:SetColorTexture(color[1], color[2], color[3], alpha)
+        t:SetColorTexture(1, 1, 1, GRID_ALPHA)
         if vertical then
             t:SetWidth(1)
             t:SetPoint("TOP", grid, "TOPLEFT", cx + offset, 0)
@@ -51,19 +58,27 @@ local function BuildGrid()
             t:SetPoint("LEFT", grid, "BOTTOMLEFT", 0, cy + offset)
             t:SetPoint("RIGHT", grid, "BOTTOMRIGHT", 0, cy + offset)
         end
+        lines[#lines + 1] = { tex = t, distance = math.abs(offset) / math.max(cx, cy) }
     end
-    local shade = Kit.Rect(grid, { 0, 0, 0, 0.35 }, "BACKGROUND")
+    shade = Kit.Rect(grid, { 0, 0, 0, SHADE_ALPHA }, "BACKGROUND")
     shade:SetAllPoints()
     for x = GRID, cx, GRID do
-        Line(true, x, { 1, 1, 1 }, 0.07)
-        Line(true, -x, { 1, 1, 1 }, 0.07)
+        Line(true, x)
+        Line(true, -x)
     end
     for y = GRID, cy, GRID do
-        Line(false, y, { 1, 1, 1 }, 0.07)
-        Line(false, -y, { 1, 1, 1 }, 0.07)
+        Line(false, y)
+        Line(false, -y)
     end
-    Line(true, 0, C.red, 0.45)
-    Line(false, 0, C.red, 0.45)
+    -- The center lines grow out from the middle when the grid opens.
+    centerX = grid:CreateTexture(nil, "ARTWORK")
+    centerX:SetColorTexture(C.red[1], C.red[2], C.red[3], 0.45)
+    centerX:SetWidth(1)
+    centerX:SetPoint("CENTER", grid, "BOTTOMLEFT", cx, cy)
+    centerY = grid:CreateTexture(nil, "ARTWORK")
+    centerY:SetColorTexture(C.red[1], C.red[2], C.red[3], 0.45)
+    centerY:SetHeight(1)
+    centerY:SetPoint("CENTER", grid, "BOTTOMLEFT", cx, cy)
     -- The guides that light up where a dragged piece will snap.
     guideX = grid:CreateTexture(nil, "OVERLAY")
     guideX:SetWidth(2)
@@ -125,35 +140,77 @@ local function Outline(mover)
     return o
 end
 
--- Where a frame would snap: its center onto the screen's center lines, or an edge onto a grid
--- line, whichever is closest within RANGE; otherwise rounded to STEP. Returns left and bottom in
--- the frame's own units (ready for SetPoint), and the lines it snapped to (UI units, or nil).
-local function Axis(start, size, center)
-    local best, guide, dist = math.floor(start / STEP + 0.5) * STEP, nil, RANGE
-    local mid = start + size / 2
-    if math.abs(mid - center) < dist then
-        best, guide, dist = center - size / 2, center, math.abs(mid - center)
-    end
-    for _, edge in ipairs({ start, start + size }) do
-        local line = center + math.floor((edge - center) / GRID + 0.5) * GRID
-        local d = math.abs(edge - line)
-        if d < dist then
-            best, guide, dist = line - (edge - start), line, d
-        end
-    end
-    return best, guide
-end
-
-function Layout.SnapPosition(frame)
+-- A frame's box in UIParent's units: left, bottom, width, height (and the scale to get back).
+local function Box(frame)
     local left, bottom = frame:GetLeft(), frame:GetBottom()
     if not left or not bottom then
         return nil
     end
     local k = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
-    local w, h = frame:GetWidth() * k, frame:GetHeight() * k
-    local x, gx = Axis(left * k, w, UIParent:GetWidth() / 2)
-    local y, gy = Axis(bottom * k, h, UIParent:GetHeight() / 2)
-    return x / k, y / k, gx, gy
+    return left * k, bottom * k, frame:GetWidth() * k, frame:GetHeight() * k, k
+end
+
+-- The guides on one axis: the screen's center line ("center") and edges ("edge"), and the
+-- sides and middles of the other visible pieces ("piece").
+local function Guides(frame, vertical)
+    local size = vertical and UIParent:GetHeight() or UIParent:GetWidth()
+    local list = { { size / 2, "center" }, { 0, "edge" }, { size, "edge" } }
+    for _, mover in pairs(movers) do
+        local other = mover.frame
+        if other ~= frame and other:IsVisible() then
+            local left, bottom, w, h = Box(other)
+            if left then
+                local start, length = left, w
+                if vertical then
+                    start, length = bottom, h
+                end
+                list[#list + 1] = { start, "piece" }
+                list[#list + 1] = { start + length / 2, "piece" }
+                list[#list + 1] = { start + length, "piece" }
+            end
+        end
+    end
+    return list
+end
+
+-- One axis: the closest of (any anchor onto a guide) and (a side onto a grid line) wins;
+-- otherwise the position rounds to STEP. Returns the new start, the line and its kind.
+local function Axis(start, size, center, guides)
+    local best, line, kind, dist = math.floor(start / STEP + 0.5) * STEP, nil, nil, RANGE
+    for _, offset in ipairs({ 0, size / 2, size }) do
+        local anchor = start + offset
+        for _, guide in ipairs(guides) do
+            local d = math.abs(anchor - guide[1])
+            if d < dist then
+                best, line, kind, dist = guide[1] - offset, guide[1], guide[2], d
+            end
+        end
+    end
+    dist = math.min(dist, GRID_RANGE)
+    for _, offset in ipairs({ 0, size }) do
+        local anchor = start + offset
+        local gridLine = center + math.floor((anchor - center) / GRID + 0.5) * GRID
+        local d = math.abs(anchor - gridLine)
+        if d < dist then
+            best, line, kind, dist = gridLine - offset, gridLine, "grid", d
+        end
+    end
+    return best, line, kind
+end
+
+-- Where a frame would snap. Returns left and bottom in the frame's own units (ready for
+-- SetPoint), then the lines it snapped to (UI units, or nil) and their kinds.
+function Layout.SnapPosition(frame)
+    local left, bottom, w, h, k = Box(frame)
+    if not left then
+        return nil
+    end
+    if IsShiftKeyDown() then
+        return left / k, bottom / k
+    end
+    local x, gx, kx = Axis(left, w, UIParent:GetWidth() / 2, Guides(frame, false))
+    local y, gy, ky = Axis(bottom, h, UIParent:GetHeight() / 2, Guides(frame, true))
+    return x / k, y / k, gx, gy, kx, ky
 end
 
 local function GridSnap(frame)
@@ -165,6 +222,31 @@ local function GridSnap(frame)
 end
 Layout.GridSnap = GridSnap
 
+local GUIDE_COLORS = {
+    center = { C.red[1], C.red[2], C.red[3], 1 },
+    piece = { C.amber[1], C.amber[2], C.amber[3], 0.9 },
+    edge = { 1, 1, 1, 0.55 },
+    grid = { 1, 1, 1, 0.55 },
+}
+
+local function Guide(tex, at, kind, vertical)
+    if not at then
+        tex:Hide()
+        return
+    end
+    local color = GUIDE_COLORS[kind] or GUIDE_COLORS.grid
+    tex:SetColorTexture(color[1], color[2], color[3], color[4])
+    tex:ClearAllPoints()
+    if vertical then
+        tex:SetPoint("TOP", grid, "TOPLEFT", at, 0)
+        tex:SetPoint("BOTTOM", grid, "BOTTOMLEFT", at, 0)
+    else
+        tex:SetPoint("LEFT", grid, "BOTTOMLEFT", 0, at)
+        tex:SetPoint("RIGHT", grid, "BOTTOMRIGHT", 0, at)
+    end
+    tex:Show()
+end
+
 -- While something is dragged: light the lines it would snap to.
 local function ShowGuides()
     if not dragging then
@@ -172,28 +254,9 @@ local function ShowGuides()
         guideY:Hide()
         return
     end
-    local _, _, gx, gy = Layout.SnapPosition(dragging)
-    local cx, cy = UIParent:GetWidth() / 2, UIParent:GetHeight() / 2
-    if gx then
-        local center = math.abs(gx - cx) < 0.5
-        guideX:SetColorTexture(center and C.red[1] or 1, center and C.red[2] or 1, center and C.red[3] or 1, center and 1 or 0.55)
-        guideX:ClearAllPoints()
-        guideX:SetPoint("TOP", grid, "TOPLEFT", gx, 0)
-        guideX:SetPoint("BOTTOM", grid, "BOTTOMLEFT", gx, 0)
-        guideX:Show()
-    else
-        guideX:Hide()
-    end
-    if gy then
-        local center = math.abs(gy - cy) < 0.5
-        guideY:SetColorTexture(center and C.red[1] or 1, center and C.red[2] or 1, center and C.red[3] or 1, center and 1 or 0.55)
-        guideY:ClearAllPoints()
-        guideY:SetPoint("LEFT", grid, "BOTTOMLEFT", 0, gy)
-        guideY:SetPoint("RIGHT", grid, "BOTTOMRIGHT", 0, gy)
-        guideY:Show()
-    else
-        guideY:Hide()
-    end
+    local _, _, gx, gy, kx, ky = Layout.SnapPosition(dragging)
+    Guide(guideX, gx, kx, true)
+    Guide(guideY, gy, ky, false)
 end
 
 -- A piece's drag began (pieces call this from their OnDragStart).
@@ -202,6 +265,74 @@ function Layout.DragStart(key)
     if editing and mover then
         dragging = mover.frame
         grid:SetScript("OnUpdate", Utils.Guard("layout guides", ShowGuides))
+    end
+end
+
+-- Opening: the shade fades in, the center lines grow out of the middle, the grid ripples out
+-- after them, the bar drops in from the top and the outlines pop in one after another.
+local function AnimateIn()
+    local w, h = UIParent:GetWidth(), UIParent:GetHeight()
+    grid:SetAlpha(1)
+    Kit.Tween(grid, 0, 1, 0.45, function(p)
+        shade:SetAlpha(p)
+        centerX:SetHeight(math.max(1, h * p))
+        centerY:SetWidth(math.max(1, w * p))
+    end, "quint")
+    for _, line in ipairs(lines) do
+        line.tex:SetAlpha(0)
+        Kit.Tween(line.tex, 0, 1, 0.3, function(p) line.tex:SetAlpha(p) end, "out", 0.05 + line.distance * 0.35)
+    end
+    bar:Show()
+    bar:SetAlpha(0)
+    Kit.Tween(bar, 0, 1, 0.38, function(p)
+        bar:SetAlpha(math.min(1, p))
+        bar:ClearAllPoints()
+        bar:SetPoint("TOP", 0, -14 + 40 * (1 - p))
+    end, "back", 0.08)
+    local i = 0
+    for _, mover in pairs(movers) do
+        local o = Outline(mover)
+        o:Show()
+        o:SetAlpha(0)
+        Kit.Tween(o, 0, 1, 0.25, function(p) o:SetAlpha(p) end, "out", 0.15 + i * 0.06)
+        i = i + 1
+    end
+end
+
+-- Closing: the bar lifts away, the outlines fade, the grid folds back into its center lines.
+-- Everything hides once it's gone (unless edit layout opened again meanwhile).
+local function AnimateOut()
+    local w, h = UIParent:GetWidth(), UIParent:GetHeight()
+    if grid and grid:IsShown() then
+        Kit.Tween(grid, grid:GetAlpha(), 0, 0.28, function(p)
+            grid:SetAlpha(p)
+            centerX:SetHeight(math.max(1, h * p))
+            centerY:SetWidth(math.max(1, w * p))
+            if p <= 0 and not editing then
+                grid:Hide()
+            end
+        end)
+    end
+    if bar and bar:IsShown() then
+        Kit.Tween(bar, bar:GetAlpha(), 0, 0.2, function(p)
+            bar:SetAlpha(p)
+            bar:ClearAllPoints()
+            bar:SetPoint("TOP", 0, -14 + 30 * (1 - p))
+            if p <= 0 and not editing then
+                bar:Hide()
+            end
+        end)
+    end
+    for _, mover in pairs(movers) do
+        local o = mover.outline
+        if o and o:IsShown() then
+            Kit.Tween(o, o:GetAlpha(), 0, 0.16, function(p)
+                o:SetAlpha(p)
+                if p <= 0 and not editing then
+                    o:Hide()
+                end
+            end)
+        end
     end
 end
 
@@ -219,19 +350,16 @@ function Layout.Start()
     end
     local console = _G.OnAirConsole
     consoleWasOpen = console and console:IsShown() or false
-    if consoleWasOpen then
-        console:Hide()
+    if consoleWasOpen and OA.UI then
+        OA.UI.HideConsole()
     end
     grid:Show()
-    grid:SetAlpha(0)
-    Kit.Tween(grid, 0, 1, 0.25, function(p) grid:SetAlpha(p) end)
-    bar:Show()
     for _, mover in pairs(movers) do
         if mover.opts.show then
-            mover.opts.show(true)
+            Utils.Guard("layout " .. mover.label, mover.opts.show)(true)
         end
-        Outline(mover):Show()
     end
+    AnimateIn()
     if OA.UI and OA.UI.Refresh then
         OA.UI.Refresh()
     end
@@ -248,15 +376,11 @@ function Layout.Stop(force)
     dragging = nil
     if grid then
         grid:SetScript("OnUpdate", nil)
-        grid:Hide()
+        guideX:Hide()
+        guideY:Hide()
     end
-    if bar and bar:IsShown() then
-        bar:Hide()
-    end
+    Utils.Guard("layout close", AnimateOut)()
     for key, mover in pairs(movers) do
-        if mover.outline then
-            mover.outline:Hide()
-        end
         if mover.opts.show then
             Utils.Guard("layout " .. key, mover.opts.show)(false)
         end
@@ -278,7 +402,7 @@ function Layout.Toggle()
     end
 end
 
--- Called by a piece when a drag ends: snap it (its own way or to the grid), then save.
+-- Called by a piece when a drag ends: snap it (its own way or to the guides), then save.
 function Layout.Dropped(key)
     local mover = movers[key]
     if mover and dragging == mover.frame then

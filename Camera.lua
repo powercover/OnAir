@@ -208,43 +208,141 @@ end
 
 ---------------------------------------------------------------------------------------------- orbit
 
-local orbiting = false
+-- A slow turn around your character, for intros and outros, either way round. Stops on its own
+-- when combat starts and, if set, when you start moving or take the camera with the mouse.
+local orbiting -- nil, "left" or "right"
+local watcher
+local grace = 0
+
+local MOVE = {
+    left = { start = "MoveViewLeftStart", stop = "MoveViewLeftStop" },
+    right = { start = "MoveViewRightStart", stop = "MoveViewRightStop" },
+}
+
+local function Call(name, ...)
+    local fn = _G[name]
+    if type(fn) == "function" then
+        pcall(fn, ...)
+        return true
+    end
+end
+
+local function Refresh()
+    if OA.UI and OA.UI.Refresh then
+        OA.UI.Refresh()
+    end
+    if OA.Deck and OA.Deck.Refresh then
+        OA.Deck.Refresh()
+    end
+end
 
 function Camera.IsOrbiting()
-    return orbiting
+    return orbiting ~= nil
+end
+
+function Camera.OrbitDirection()
+    return orbiting or DB().orbitDir or "left"
+end
+
+-- Mouse on the world with a button held: the player is turning the camera themselves.
+local function MouseOnCamera()
+    if type(IsMouselooking) == "function" and IsMouselooking() then
+        return true
+    end
+    if type(IsMouseButtonDown) ~= "function" or not IsMouseButtonDown("LeftButton") then
+        return false
+    end
+    local focus
+    if type(GetMouseFoci) == "function" then
+        focus = GetMouseFoci()[1]
+    elseif type(GetMouseFocus) == "function" then
+        focus = GetMouseFocus()
+    end
+    return focus == nil or focus == WorldFrame
+end
+
+local function Watch(_, elapsed)
+    if grace > 0 then
+        grace = grace - elapsed
+        return
+    end
+    local stop = DB().orbitStop or {}
+    if stop.mouse and MouseOnCamera() then
+        Camera.StopOrbit()
+    end
+end
+
+local function OnEvent()
+    if (DB().orbitStop or {}).move and grace <= 0 then
+        Camera.StopOrbit()
+    end
+end
+
+local function Watcher(on)
+    if not watcher then
+        watcher = CreateFrame("Frame")
+        watcher:SetScript("OnEvent", OA.Utils.Guard("orbit stop", OnEvent))
+    end
+    if on then
+        grace = 0.3
+        watcher:SetScript("OnUpdate", OA.Utils.Guard("orbit watch", Watch))
+        watcher:RegisterEvent("PLAYER_STARTED_MOVING")
+        watcher:RegisterEvent("PLAYER_STARTED_TURNING")
+    else
+        watcher:SetScript("OnUpdate", nil)
+        watcher:UnregisterAllEvents()
+    end
 end
 
 function Camera.StopOrbit()
     if orbiting then
-        orbiting = false
-        pcall(MoveViewLeftStop)
-        if OA.UI and OA.UI.Refresh then
-            OA.UI.Refresh()
-        end
+        Call(MOVE[orbiting].stop)
+        orbiting = nil
+        Watcher(false)
+        Refresh()
     end
 end
 
--- A slow turn around your character, for intros and outros. Stops on its own when combat starts.
-function Camera.ToggleOrbit()
+-- Starts turning one way ("left", "right"; nil: the saved direction). Switching way round just
+-- turns the other way.
+function Camera.StartOrbit(dir)
+    dir = MOVE[dir] and dir or DB().orbitDir or "left"
+    if orbiting == dir then
+        return
+    end
     if orbiting then
+        Call(MOVE[orbiting].stop)
+    end
+    if not Call(MOVE[dir].start, DB().orbitSpeed or 0.05) then
+        orbiting = nil
+        return
+    end
+    orbiting = dir
+    Watcher(true)
+    Refresh()
+end
+
+-- The same way again stops it; the other way switches over.
+function Camera.ToggleOrbit(dir)
+    if orbiting and (dir == nil or dir == orbiting) then
         Camera.StopOrbit()
-        return
+    else
+        Camera.StartOrbit(dir)
     end
-    if type(MoveViewLeftStart) ~= "function" then
-        return
-    end
-    orbiting = true
-    pcall(MoveViewLeftStart, DB().orbitSpeed or 0.05)
-    if OA.UI and OA.UI.Refresh then
-        OA.UI.Refresh()
+end
+
+function Camera.SetOrbitDirection(dir)
+    DB().orbitDir = dir
+    if orbiting and orbiting ~= dir then
+        Camera.StartOrbit(dir)
     end
 end
 
 function Camera.SetOrbitSpeed(speed)
     DB().orbitSpeed = speed
     if orbiting then
-        pcall(MoveViewLeftStop)
-        pcall(MoveViewLeftStart, speed)
+        Call(MOVE[orbiting].stop)
+        Call(MOVE[orbiting].start, speed)
     end
 end
 

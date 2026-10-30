@@ -98,9 +98,15 @@ Deck.BUTTONS = {
             end
         end },
     { key = "orbit", icon = "Orbit", text = L["Orbit"],
-        tip = function() return L["A slow turn around your character."] end,
+        tip = function() return L["Left: orbit left. Right: orbit right. The same click again or a middle click stops it."] end,
         on = function() return OA.Camera.IsOrbiting() end,
-        click = function() OA.Camera.ToggleOrbit() end },
+        click = function(button)
+            if button == "MiddleButton" then
+                OA.Camera.StopOrbit()
+            else
+                OA.Camera.ToggleOrbit(button == "RightButton" and "right" or "left")
+            end
+        end },
     { key = "mark", icon = "Flag", text = L["Mark a moment"],
         tip = function() return L["Adds a moment at the current timecode."] end,
         on = function() return false end,

@@ -25,7 +25,11 @@
   tooltips and chat; names above heads switch off with them.
 - The Deck: a small control bar that stays with the UI hidden (Alt+Z): go live, hide the UI, camera
   presets, orbit, mark, edit layout, console. Sticks to edges and corners; stays, fades or tucks away.
-- Edit layout: a grid over the screen to place the badge, stream chat and Deck, snapping as you drop.
+- Edit layout: a grid over the screen to place the badge, stream chat and Deck. Any side or the middle
+  of a piece snaps to the center lines, the screen edges and the other pieces (lit as you drag), sides
+  to the grid; Shift drops freely. Opening and closing it animate.
+- Orbit either way round. On the Deck: left click orbits left, right click right, the same click again
+  or a middle click stops. Optionally stops when you move or turn the camera with the mouse.
 - Preview: everything masked like live, without the clock, moments or Shield.
 - New console: pages grouped as Live / Privacy / Production, page headers, a status strip, smoother
   motion (pages glide in, cards appear in turn, a stretching rail marker, springy switches).

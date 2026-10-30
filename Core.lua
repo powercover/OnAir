@@ -34,7 +34,8 @@ local DEFAULTS = {
     badge = false,
     minimap = { show = true, angle = 200 },
     -- Camera values left nil mean "the game's default".
-    camera = { mode = "off", preset = "default", orbitSpeed = 0.05 },
+    camera = { mode = "off", preset = "default", orbitSpeed = 0.05, orbitDir = "left",
+        orbitStop = { move = true, mouse = true } },
     moments = { sessions = {}, auto = {}, flash = true, note = true, screenshot = false },
     shield = { whispers = true, reply = false, replyText = L["I'm live right now, so whispers are off. I'll read yours after the stream!"],
         invites = true, duels = true, trades = true, zones = false, banners = true, minimap = false, held = {} },

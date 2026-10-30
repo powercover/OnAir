@@ -306,10 +306,27 @@ def i_camera(d, P, w):  # a film camera: body, lens, two reels
     d.ellipse(P(108, 40, 164, 96), outline=WHITE, width=int(w * 0.8))
 
 
-def i_orbit(d, P, w):  # a dot circled by an arrow
-    d.ellipse(P(104, 104, 152, 152), fill=WHITE)
-    d.arc(P(32, 56, 224, 200), 200, 520, fill=WHITE, width=w)
-    d.polygon(P(36, 104, 12, 150, 66, 140), fill=WHITE)
+def i_orbit(d, P, w):  # a figure with a tilted ring around it, arrow on the front
+    clear = (0, 0, 0, 0)
+    cx, cy, rx, ry = 128, 166, 98, 40
+    box = P(cx - rx, cy - ry, cx + rx, cy + ry)
+    d.arc(box, 180, 360, fill=WHITE, width=w)            # the back of the ring
+    d.ellipse(P(96, 26, 160, 90), fill=clear)              # a gap around the figure
+    d.rounded_rectangle(P(80, 94, 176, 214), radius=40 * P(1)[0], fill=clear)
+    d.ellipse(P(106, 36, 150, 80), fill=WHITE)             # head
+    d.rounded_rectangle(P(92, 104, 164, 204), radius=30 * P(1)[0], fill=WHITE)
+    d.arc(P(cx - rx - 14, cy - ry - 14, cx + rx + 14, cy + ry + 14), 8, 164, fill=clear, width=w * 2)
+    d.arc(box, 10, 160, fill=WHITE, width=w)              # the front, over the figure
+    t = math.radians(160)
+    x, y = cx + rx * math.cos(t), cy + ry * math.sin(t)
+    tx, ty = -rx * math.sin(t), ry * math.cos(t)
+    n = math.hypot(tx, ty)
+    tx, ty = tx / n, ty / n
+    nx, ny = -ty, tx
+    tip = (x + tx * 40, y + ty * 40)
+    b1 = (x - tx * 4 + nx * 28, y - ty * 4 + ny * 28)
+    b2 = (x - tx * 4 - nx * 28, y - ty * 4 - ny * 28)
+    d.polygon(P(*tip, *b1, *b2), fill=WHITE)
 
 
 def i_flag(d, P, w):  # a marker flag
