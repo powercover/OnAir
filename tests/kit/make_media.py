@@ -99,6 +99,18 @@ def shapes():
     img = img.filter(ImageFilter.GaussianBlur(u * 0.09))
     save(img, os.path.join(MEDIA, "Glow.tga"), size)
 
+    # Tiles (the game repeats them): the slate's diagonal clapper stripes, film sprocket holes.
+    img = Image.new("RGBA", (32 * S, 32 * S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    for k in range(-2, 3):
+        o = k * 32 * S
+        d.polygon([(o, 0), (o + 16 * S, 0), (o + 16 * S + 32 * S, 32 * S), (o + 32 * S, 32 * S)], fill=WHITE)
+    save(img, os.path.join(MEDIA, "Stripes.tga"), 32)
+    img = Image.new("RGBA", (16 * S, 8 * S), (0, 0, 0, 0))
+    ImageDraw.Draw(img).rounded_rectangle((4 * S, 2 * S, 12 * S, 6 * S), radius=S, fill=WHITE)
+    img = img.resize((16, 8), Image.LANCZOS)
+    img.save(os.path.join(MEDIA, "Sprocket.tga"))
+
 
 # ---------------------------------------------------------------------------- glyph icons
 # Drawn on a 256 grid (x4 supersampled to 1024), stroke ~20.
@@ -329,6 +341,15 @@ def i_orbit(d, P, w):  # a figure with a tilted ring around it, arrow on the fro
     d.polygon(P(*tip, *b1, *b2), fill=WHITE)
 
 
+def i_layout(d, P, w):  # a screen with its center guides and a piece snapped onto them
+    d.rounded_rectangle(P(24, 40, 232, 216), radius=16 * P(1)[0], outline=WHITE, width=w)
+    for y in range(52, 206, 26):
+        d.line(P(128, y, 128, y + 12), fill=WHITE, width=int(w * 0.5))
+    for x in range(36, 222, 26):
+        d.line(P(x, 128, x + 12, 128), fill=WHITE, width=int(w * 0.5))
+    d.rounded_rectangle(P(128, 72, 196, 128), radius=8 * P(1)[0], fill=WHITE)
+
+
 def i_flag(d, P, w):  # a marker flag
     d.line(P(64, 28, 64, 232), fill=WHITE, width=w)
     d.polygon(P(64, 36, 212, 76, 64, 128), fill=WHITE)
@@ -353,7 +374,7 @@ def i_clapper(d, P, w):  # a clapperboard
 
 
 ICON_FUNCS = {
-    "Camera": i_camera, "Orbit": i_orbit, "Flag": i_flag, "Shield": i_shield, "Copy": i_copy,
+    "Camera": i_camera, "Orbit": i_orbit, "Layout": i_layout, "Flag": i_flag, "Shield": i_shield, "Copy": i_copy,
     "Clapper": i_clapper,
     "Live": i_live, "Names": i_names, "Hide": i_hide, "Custom": i_custom, "About": i_about,
     "Chat": i_chat, "Nameplate": i_nameplate, "UnitFrame": i_unitframe, "Group": i_group,

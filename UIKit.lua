@@ -1,8 +1,9 @@
 local _, OA = ...
 
--- The look: a dark broadcast console with one red "live" accent. Flat shapes, thin lines, the
--- game's Arial Narrow for a tight studio-label feel. Every widget is built from color textures and
--- the white shapes in Media/ (tinted), so there are no Blizzard templates to fight.
+-- The look: flat shapes, thin lines, the game's Arial Narrow for a tight studio-label feel.
+-- Every widget is built from color textures and the white shapes in Media/ (tinted), so there are
+-- no Blizzard templates to fight. Themes (below) recolor it all and add their own touches: a
+-- camera viewfinder (the default), a vision mixer, a film slate, or the plain studio console.
 OA.Kit = {}
 
 local Kit = OA.Kit
@@ -23,8 +24,139 @@ local C = {
     off = { 0.27, 0.29, 0.32, 1 },
     amber = { 1, 0.69, 0.2, 1 },
     green = { 0.4, 0.86, 0.5, 1 },
+    accent = { 1, 0.231, 0.188, 1 },  -- what's picked: rail item, switch, slider fill
+    accentInk = { 1, 1, 1, 1 },       -- text on the accent
+    knob = { 1, 1, 1, 1 },            -- switch and slider knobs
+    tally = { 0.4, 0.86, 0.5, 1 },    -- the "preview" / standby green
 }
 Kit.C = C
+
+---------------------------------------------------------------------------------------------- themes
+
+-- Each theme: a palette (any key of C), the words for live / preview / off the air, and flags
+-- for its touches. Applied once at login (before anything is built); switching reloads the UI.
+Kit.THEMES = {
+    { key = "viewfinder", icon = "Camera", words = { live = "REC", preview = "PREVIEW", off = "STBY" },
+        corners = true, thirds = true, fillSelect = true, ticks = true,
+        palette = {
+            bg = { 0.078, 0.082, 0.09, 0.98 }, rail = { 0.067, 0.071, 0.078, 1 },
+            card = { 0.106, 0.11, 0.122, 1 }, raised = { 0.145, 0.149, 0.161, 1 },
+            hover = { 0.18, 0.184, 0.196, 1 }, line = { 0.23, 0.231, 0.247, 1 },
+            text = { 0.914, 0.902, 0.875, 1 }, muted = { 0.604, 0.588, 0.553, 1 },
+            faint = { 0.38, 0.37, 0.35, 1 }, off = { 0.3, 0.3, 0.3, 1 },
+            accent = { 1, 0.69, 0.125, 1 }, accentInk = { 0.078, 0.082, 0.09, 1 },
+            knob = { 0.078, 0.082, 0.09, 1 }, tally = { 0.31, 0.765, 0.969, 1 },
+        },
+        sections = { { 1, 0.231, 0.188, 1 }, { 1, 0.69, 0.125, 1 }, { 0.31, 0.765, 0.969, 1 }, { 0.482, 0.847, 0.561, 1 } } },
+    { key = "mixer", icon = "Group", words = { live = "PROGRAM", preview = "PREVIEW", off = "OFF AIR" },
+        keys = true, cap = true, tileTop = true,
+        palette = {
+            bg = { 0.114, 0.122, 0.141, 0.98 }, rail = { 0.09, 0.098, 0.114, 1 },
+            card = { 0.165, 0.173, 0.2, 1 }, raised = { 0.2, 0.208, 0.239, 1 },
+            hover = { 0.24, 0.25, 0.282, 1 }, line = { 0.255, 0.267, 0.306, 1 },
+            text = { 0.847, 0.859, 0.886, 1 }, muted = { 0.541, 0.561, 0.604, 1 },
+            faint = { 0.36, 0.38, 0.42, 1 },
+            accent = { 1, 0.231, 0.188, 1 }, tally = { 0.545, 0.886, 0.561, 1 },
+            knob = { 0.79, 0.8, 0.83, 1 },
+        } },
+    { key = "slate", icon = "Clapper", words = { live = "TAKE", preview = "REHEARSAL", off = "CUT" },
+        stripes = true, sprockets = true,
+        palette = {
+            bg = { 0.102, 0.102, 0.102, 0.98 }, rail = { 0.078, 0.078, 0.078, 1 },
+            card = { 0.125, 0.125, 0.12, 1 }, raised = { 0.165, 0.16, 0.153, 1 },
+            hover = { 0.2, 0.196, 0.188, 1 }, line = { 0.42, 0.4, 0.36, 1 },
+            text = { 0.937, 0.914, 0.863, 1 }, muted = { 0.659, 0.635, 0.58, 1 },
+            faint = { 0.45, 0.43, 0.39, 1 }, red = { 1, 0.353, 0.306, 1 },
+            accent = { 0.937, 0.914, 0.863, 1 }, accentInk = { 0.102, 0.102, 0.102, 1 },
+            knob = { 0.102, 0.102, 0.102, 1 },
+        } },
+    { key = "studio", icon = "Live", words = { live = "ON AIR", preview = "PREVIEW", off = "OFF AIR" },
+        palette = {} },
+}
+
+local theme = Kit.THEMES[1]
+
+-- The base colors (what a theme leaves alone keeps these), for previews of the other themes.
+local BASE = {}
+for name, color in pairs(C) do
+    BASE[name] = { color[1], color[2], color[3], color[4] }
+end
+
+-- A color of any theme (for its preview card).
+function Kit.ThemeColor(t, name)
+    return t.palette[name] or BASE[name]
+end
+
+function Kit.Theme()
+    return theme
+end
+
+-- Paints the palette into C (the same tables, so colors captured earlier follow).
+function Kit.ApplyTheme(key)
+    for _, t in ipairs(Kit.THEMES) do
+        if t.key == key then
+            theme = t
+        end
+    end
+    for name, base in pairs(BASE) do
+        local color = theme.palette[name] or base
+        local target = C[name]
+        for i = 1, 4 do
+            target[i] = color[i] or 1
+        end
+    end
+end
+
+-- "live", "preview" or "off" in the theme's words (REC / PREVIEW / STBY on a viewfinder).
+function Kit.Word(state)
+    return OA.L[theme.words[state] or ""]
+end
+
+-- Viewfinder brackets on a frame's corners. Returns the textures (to move them, e.g. fly in).
+function Kit.Corners(frame, length, thick, color, inset, layer)
+    local list = {}
+    for _, corner in ipairs({ "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" }) do
+        local sx = corner:find("LEFT") and 1 or -1
+        local sy = corner:find("TOP") and -1 or 1
+        local h = frame:CreateTexture(nil, layer or "OVERLAY")
+        h:SetColorTexture(unpack(color))
+        h:SetSize(length, thick)
+        local v = frame:CreateTexture(nil, layer or "OVERLAY")
+        v:SetColorTexture(unpack(color))
+        v:SetSize(thick, length)
+        local bracket = { h = h, v = v, corner = corner, sx = sx, sy = sy }
+        function bracket.Place(off)
+            h:ClearAllPoints()
+            v:ClearAllPoints()
+            h:SetPoint(corner, frame, corner, sx * off, sy * off)
+            v:SetPoint(corner, frame, corner, sx * off, sy * off)
+        end
+        bracket.Place(inset or 0)
+        list[#list + 1] = bracket
+    end
+    function list.Place(off)
+        for _, b in ipairs(list) do
+            b.Place(off)
+        end
+    end
+    function list.SetAlpha(a)
+        for _, b in ipairs(list) do
+            b.h:SetAlpha(a)
+            b.v:SetAlpha(a)
+        end
+    end
+    return list
+end
+
+-- A tiled band: the slate's diagonal clapper stripes or a film strip's sprocket holes.
+function Kit.Band(parent, file, color, layer)
+    local tex = parent:CreateTexture(nil, layer or "ARTWORK")
+    tex:SetTexture(Utils.MEDIA .. file, "REPEAT", "REPEAT")
+    tex:SetHorizTile(true)
+    tex:SetVertTile(true)
+    tex:SetVertexColor(unpack(color or C.text))
+    return tex
+end
 
 -- Arial Narrow has no Cyrillic or East Asian letters: those clients use their standard font.
 local LATIN = { enUS = true, enGB = true, deDE = true, frFR = true, esES = true, esMX = true, itIT = true, ptBR = true }
@@ -281,7 +413,8 @@ function Kit.Switch(parent, get, set)
     knob:SetSize(14, 14)
     local key = {}
     local function Paint(p)
-        local r, g, b, a = Mix(C.off, C.red, p)
+        local r, g, b, a = Mix(C.off, C.accent, p)
+        knob:SetVertexColor(Mix({ 1, 1, 1, 1 }, C.knob, p))
         left:SetVertexColor(r, g, b, a)
         right:SetVertexColor(r, g, b, a)
         mid:SetColorTexture(r, g, b, a)
@@ -315,11 +448,14 @@ function Kit.Segmented(parent, options, width, get, set)
     bg:SetAllPoints()
     Kit.Border(bar)
     local segW = width / #options
-    local pill = Kit.Rect(bar, C.raised, "BORDER")
+    -- A viewfinder fills the picked one (like a camera menu); the others underline it.
+    local fill = theme.fillSelect
+    local pill = Kit.Rect(bar, fill and C.accent or C.raised, "BORDER")
     pill:SetSize(segW - 4, h - 4)
-    local underline = Kit.Rect(bar, C.red, "ARTWORK")
+    local underline = Kit.Rect(bar, C.accent, "ARTWORK")
     underline:SetSize(segW - 4, 2)
     underline:SetPoint("BOTTOMLEFT", pill, "BOTTOMLEFT")
+    underline:SetShown(not fill)
     local buttons = {}
     local key = {}
     local x = 0
@@ -345,7 +481,7 @@ function Kit.Segmented(parent, options, width, get, set)
             Place(target)
         end
         for i, b in ipairs(buttons) do
-            b.label:SetTextColor(unpack(i == index and C.text or C.muted))
+            b.label:SetTextColor(unpack(i == index and (fill and C.accentInk or C.text) or C.muted))
         end
     end
     for i, option in ipairs(options) do
@@ -378,7 +514,7 @@ function Kit.Input(parent, width, get, set, live)
     local bg = Kit.Rect(box, C.card, "BACKGROUND")
     bg:SetAllPoints()
     local edges = Kit.Border(box)
-    local focusLine = Kit.Rect(box, C.red, "ARTWORK")
+    local focusLine = Kit.Rect(box, C.accent, "ARTWORK")
     focusLine:SetPoint("BOTTOMLEFT")
     focusLine:SetPoint("BOTTOMRIGHT")
     focusLine:SetHeight(1)
@@ -445,11 +581,25 @@ function Kit.Slider(parent, width, label, min, max, step, get, set, format)
     rail:SetPoint("LEFT")
     rail:SetPoint("RIGHT")
     rail:SetHeight(3)
-    local fill = Kit.Rect(track, C.red, "BORDER")
+    local fill = Kit.Rect(track, C.accent, "BORDER")
     fill:SetPoint("LEFT")
     fill:SetHeight(3)
-    local knob = Kit.Shape(track, "Dot", { 1, 1, 1, 1 }, "ARTWORK")
-    knob:SetSize(12, 12)
+    -- Knob: a dot, or a fader cap on a vision mixer. A viewfinder adds a tick scale.
+    local knob
+    if theme.cap then
+        knob = Kit.Rect(track, C.knob, "ARTWORK")
+        knob:SetSize(8, 16)
+    else
+        knob = Kit.Shape(track, "Dot", theme.fillSelect and C.accent or { 1, 1, 1, 1 }, "ARTWORK")
+        knob:SetSize(12, 12)
+    end
+    if theme.ticks then
+        for i = 0, 10 do
+            local tick = Kit.Rect(track, C.faint, "BACKGROUND")
+            tick:SetSize(1, i % 5 == 0 and 7 or 4)
+            tick:SetPoint("BOTTOM", track, "BOTTOMLEFT", width * i / 10, 9)
+        end
+    end
     local enabled = true
 
     local function Snap(v)

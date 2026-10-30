@@ -61,7 +61,7 @@ local SECTIONS = {
         { key = "stream", icon = "Chat", text = L["Stream chat"],
             desc = L["While live, a clean chat window covers yours and shows only what you pick, every name already an alias. Your real chat keeps running underneath."] },
         { key = "moments", icon = "Flag", text = L["Moments"],
-            desc = L["Going live starts a clock at 00:00. Start your recording at the same time: a short clapper flash marks 00:00 in the video, so these timecodes match it exactly."] },
+            desc = L["Going live starts a clock at 00:00. Start your recording at the same time: a short ON AIR slate marks 00:00 in the video, so these timecodes match it exactly."] },
     } },
     { title = L["PRIVACY"], items = {
         { key = "names", icon = "Names", text = L["Names"],
@@ -78,6 +78,10 @@ local SECTIONS = {
             desc = L["Cinematic camera for recording: zoom, field of view, shoulder offset, smoother motion, orbit."] },
         { key = "deck", icon = "Group", text = L["Deck"],
             desc = L["A small control bar that stays on screen even with the UI hidden (Alt+Z). Drag it to any edge or corner."] },
+        { key = "look", icon = "Clapper", text = L["Look"],
+            desc = L["How OnAir looks: a camera viewfinder, a vision mixer, a film slate or the plain studio console. The console, the Deck, the stream chat and the go-live moment all follow."] },
+        { key = "layout", icon = "Layout", text = L["Layout"],
+            desc = L["Place the stream chat and the Deck on screen, and how they snap while you drag them."] },
     } },
     { items = {
         { key = "about", icon = "About", text = L["About"],
@@ -168,7 +172,7 @@ local function BuildHeader(frame)
             glow:SetVertexColor(unpack(C.amber))
             glow:Show()
             pulse:Play()
-            tallyText:SetText(L["PREVIEW"])
+            tallyText:SetText(Kit.Word("preview"))
             tallyText:SetTextColor(unpack(C.amber))
             Kit.SetBorderColor(tallyEdges, C.line)
         elseif OA.live then
@@ -176,15 +180,15 @@ local function BuildHeader(frame)
             glow:SetVertexColor(unpack(C.red))
             glow:Show()
             pulse:Play()
-            tallyText:SetText(L["ON AIR"])
+            tallyText:SetText(Kit.Word("live"))
             tallyText:SetTextColor(unpack(C.text))
             Kit.SetBorderColor(tallyEdges, C.redDeep)
         else
             dot:SetVertexColor(unpack(C.off))
             pulse:Stop()
             glow:Hide()
-            tallyText:SetText(L["OFF AIR"])
-            tallyText:SetTextColor(unpack(C.muted))
+            tallyText:SetText(Kit.Word("off"))
+            tallyText:SetTextColor(unpack(Kit.Theme().thirds and C.tally or C.muted))
             Kit.SetBorderColor(tallyEdges, C.line)
         end
         preview.label:SetText((OA.live and OA.rehearsal) and L["End preview"] or L["Preview"])
@@ -220,9 +224,12 @@ local function BuildRail(frame)
     edge:SetWidth(1)
 
     -- The marker stretches as it moves: its leading edge goes first, the trailing edge follows.
-    local marker = Kit.Rect(rail, C.red, "OVERLAY")
+    -- On a viewfinder the whole row lights up, like a camera menu.
+    local fill = Kit.Theme().fillSelect
+    local marker = Kit.Rect(rail, C.accent, "OVERLAY")
     marker:SetWidth(3)
-    local markerBg = Kit.Rect(rail, C.card, "BORDER")
+    marker:SetShown(not fill)
+    local markerBg = Kit.Rect(rail, fill and C.accent or C.card, "BORDER")
     markerBg:SetWidth(RAIL - 1)
     local top, bottom = 0, NAV_H
     local edgeTop, edgeBottom = {}, {}
@@ -243,10 +250,18 @@ local function BuildRail(frame)
         Kit.Tween(edgeBottom, bottom, y + NAV_H, down and 0.22 or 0.38, function(v) bottom = v; Paint() end, "quint")
     end
 
-    local function Item(item, y)
+    local sectionColors = Kit.Theme().sections
+    local function Item(item, y, section)
         local b = CreateFrame("Button", nil, rail)
         b:SetSize(RAIL - 1, NAV_H)
         b:SetPoint("TOPLEFT", 0, -y)
+        -- A viewfinder's colored menu tabs, one color per group.
+        local tabColor = sectionColors and sectionColors[section]
+        if tabColor then
+            local tab = Kit.Rect(b, tabColor, "ARTWORK")
+            tab:SetSize(3, 14)
+            tab:SetPoint("LEFT", 12, 0)
+        end
         local icon = Kit.Icon(b, item.icon, 16, C.muted)
         icon:SetPoint("LEFT", 24, 0)
         local text = Kit.Text(b, 14, C.muted)
@@ -270,21 +285,21 @@ local function BuildRail(frame)
     end
 
     local y = 10
-    for _, section in ipairs(SECTIONS) do
+    for index, section in ipairs(SECTIONS) do
         if section.title then
             local label = Kit.Text(rail, 10, C.faint)
             label:SetPoint("TOPLEFT", 24, -y - 14)
             label:SetText(section.title)
             y = y + SECTION_H
             for _, item in ipairs(section.items) do
-                Item(item, y)
+                Item(item, y, index)
                 y = y + NAV_H
             end
         else
             -- The last group sits at the bottom of the rail.
             local bottom = H - HEADER - STATUS - 12 - #section.items * NAV_H
             for i, item in ipairs(section.items) do
-                Item(item, bottom + (i - 1) * NAV_H)
+                Item(item, bottom + (i - 1) * NAV_H, index)
             end
         end
     end
@@ -321,10 +336,11 @@ function UI.ShowPage(key, animate)
             page:Hide()
         end
     end
+    local fill = Kit.Theme().fillSelect
     for k, b in pairs(navs) do
         local on = k == key
-        b.text:SetTextColor(unpack(on and C.text or C.muted))
-        b.icon:SetVertexColor(unpack(on and C.red or C.muted))
+        b.text:SetTextColor(unpack(on and (fill and C.accentInk or C.text) or C.muted))
+        b.icon:SetVertexColor(unpack(on and (fill and C.accentInk or C.accent) or C.muted))
         if on then
             console.rail.Move(b.y, animate)
         end
@@ -363,11 +379,11 @@ local function BuildStatus(frame)
     local segments = {
         { page = "broadcast", text = function()
             if OA.live and OA.rehearsal then
-                return L["PREVIEW"], C.amber
+                return Kit.Word("preview"), C.amber
             elseif OA.live then
-                return L["LIVE"] .. "  " .. FormatTime(OA.Moments.Elapsed()), C.red
+                return Kit.Word("live") .. "  " .. FormatTime(OA.Moments.Elapsed()), C.red
             end
-            return L["OFF AIR"], C.off
+            return Kit.Word("off"), C.off
         end },
         { page = "names", text = function()
             return string.format(L["%d masked"], Names.Count()), OA.live and C.red or C.off
@@ -446,10 +462,10 @@ local function NewPage(key)
     page.scroll = scroll
 
     local body = page.body
-    local watermark = Kit.Icon(body, item.icon, 128, C.red)
+    local watermark = Kit.Icon(body, item.icon, 128, C.accent)
     watermark:SetPoint("TOPRIGHT", -PAD + 8, -10)
     watermark:SetAlpha(0.06)
-    local kicker = Kit.Text(body, 10, C.red)
+    local kicker = Kit.Text(body, 10, C.accent)
     kicker:SetPoint("TOPLEFT", PAD, -PAD + 4)
     kicker:SetText(item.section or "ONAIR")
     local title = Kit.Text(body, 26, C.text)
@@ -518,10 +534,16 @@ local function Tile(parent, icon, title, help, get, set)
     sheen:SetPoint("TOPLEFT", 1, -1)
     sheen:SetPoint("TOPRIGHT", -1, -1)
     sheen:SetHeight(1)
-    local accent = Kit.Rect(tile, C.red, "ARTWORK")
+    -- On: a lit edge, on the left (a vision mixer lights the top, like a tally).
+    local accent = Kit.Rect(tile, C.accent, "ARTWORK")
     accent:SetPoint("TOPLEFT")
-    accent:SetPoint("BOTTOMLEFT")
-    accent:SetWidth(2)
+    if Kit.Theme().tileTop then
+        accent:SetPoint("TOPRIGHT")
+        accent:SetHeight(3)
+    else
+        accent:SetPoint("BOTTOMLEFT")
+        accent:SetWidth(2)
+    end
     local badge = Kit.Rect(tile, C.raised, "BORDER")
     badge:SetSize(36, 36)
     badge:SetPoint("LEFT", 14, 0)
@@ -544,7 +566,7 @@ local function Tile(parent, icon, title, help, get, set)
     local lit = get() and 1 or 0
     local function Paint(animate)
         local on = get() and 1 or 0
-        glyph:SetVertexColor(unpack(on == 1 and C.red or C.faint))
+        glyph:SetVertexColor(unpack(on == 1 and C.accent or C.faint))
         Kit.SetBorderColor(edges, on == 1 and C.line or C.card)
         name:SetTextColor(unpack(on == 1 and C.text or C.muted))
         if animate then
@@ -675,16 +697,13 @@ local function BuildBroadcast()
     end
 
     flow.Heading(L["On screen"])
-    local t1 = Tile(body, "Live", L["ON AIR badge"], L["Red badge while live. Drag it; click to end, right-click for the console."],
-        function() return OA.db.badge end, function(v) OA.db.badge = v end)
     local t2 = Tile(body, "Overhead", L["Go-live banner"], L["A short banner when you go live or end."],
         function() return OA.db.toast end, function(v) OA.db.toast = v end)
-    flow.Add(t1, 0, 0)
-    t2:SetPoint("TOPLEFT", t1, "TOPRIGHT", 12, 0)
-    flow.Space(TILE_H + 12)
     local t3 = Tile(body, "World", L["Minimap button"], L["Left-click: go live or end. Right-click: console."],
         function() return OA.db.minimap.show end, function(v) OA.db.minimap.show = v end)
-    flow.Add(t3, TILE_H, 18)
+    flow.Add(t2, 0, 0)
+    t3:SetPoint("TOPLEFT", t2, "TOPRIGHT", 12, 0)
+    flow.Space(TILE_H + 18)
 
     flow.Finish()
 
@@ -1061,7 +1080,7 @@ local function BuildMoments()
     local shot = Tile(after, "Camera", L["Screenshot each moment"], L["Saved in your Screenshots folder: thumbnails."],
         function() return db.screenshot == true end, function(v) db.screenshot = v end)
     shot:SetPoint("TOPLEFT", 0, extrasY)
-    local flashTile = Tile(after, "Clapper", L["Clapper flash at 00:00"], L["A short white flash when you go live."],
+    local flashTile = Tile(after, "Clapper", L["Slate at 00:00"], L["A short ON AIR card and a red frame when you go live, so the video shows 00:00."],
         function() return db.flash ~= false end, function(v) db.flash = v end)
     flashTile:SetPoint("TOPLEFT", shot, "TOPRIGHT", 12, 0)
     local noteTile = Tile(after, "Chat", L["Moments in stream chat"], L["A line with the timecode as it happens."],
@@ -1312,8 +1331,8 @@ local function BuildCamera()
         Camera.ToggleOrbit()
     end)
     flow.Add(orbit, 40, 14)
-    local orbitSpeed = Kit.Slider(body, INNER - 180, L["Orbit speed"], 0.01, 0.3, 0.01,
-        function() return cam.orbitSpeed or 0.05 end,
+    local orbitSpeed = Kit.Slider(body, INNER - 180, L["Orbit speed"], 0.01, 1, 0.01,
+        function() return cam.orbitSpeed or 0.1 end,
         function(v) Camera.SetOrbitSpeed(v) end,
         function(v) return string.format("%d%%", v * 100) end)
     orbitSpeed:SetPoint("LEFT", orbit, "RIGHT", 30, 4)
@@ -1542,6 +1561,10 @@ local function BuildDeck()
         function(v) return string.format("%d%%", v * 100) end)
     flow.Add(size, 40, 22)
 
+    local panels = Tile(body, "Orbit", L["Quick panels"], L["Rest the mouse on a button for a second: orbit speed, camera preset, snapping and more, right there."],
+        function() return db.panels ~= false end, function(v) db.panels = v end)
+    flow.Add(panels, TILE_H, 22)
+
     flow.Heading(L["Buttons"])
     local lastLeft
     for i, spec in ipairs(Deck.BUTTONS) do
@@ -1564,14 +1587,10 @@ local function BuildDeck()
     end
     flow.Space(10)
 
-    local edit = Kit.Button(body, L["Edit layout"], 140, 30, "ghost", function()
-        OA.Layout.Toggle()
-    end)
-    flow.Add(edit, 30, 12)
     local reset = Kit.Button(body, L["Back to the top"], 150, 30, "ghost", function()
         Deck.ResetPosition()
     end)
-    reset:SetPoint("LEFT", edit, "RIGHT", 10, 0)
+    flow.Add(reset, 30, 12)
     local note = Kit.Text(body, 12, C.faint)
     note:SetWidth(INNER)
     note:SetWordWrap(true)
@@ -1585,6 +1604,242 @@ local function BuildDeck()
         fade:Refresh()
         delay:Refresh()
         size:Refresh()
+    end)
+end
+
+---------------------------------------------------------------------------------------------- layout page
+
+local function BuildLayout()
+    local page = NewPage("layout")
+    local flow = Flow(page)
+    local body = page.body
+    local Layout = OA.Layout
+    local o = Layout.Options()
+
+    flow.Heading(L["Edit layout"], L["A grid over the screen: drag the stream chat and the Deck where you want them. The console comes back when you're done. Also on the Deck and /onair layout."])
+    local edit = Kit.Button(body, L["Edit layout"], 140, 30, "primary", function()
+        Layout.Toggle()
+    end)
+    flow.Add(edit, 30, 22)
+
+    flow.Heading(L["Snapping"], L["Free: pieces go exactly where you drop them. Guides: any side or the middle of a piece sticks to the screen's center lines and edges and to the other pieces. Grid: the grid lines too. Hold Shift while dragging to place freely."])
+    local snap = Kit.Segmented(body, {
+        { value = "free", text = L["Free"] },
+        { value = "guides", text = L["Guides"] },
+        { value = "grid", text = L["Grid"] },
+    }, 360, function() return o.snap end, function(v) Layout.SetOption("snap", v) end)
+    flow.Add(snap, 26, 22)
+
+    flow.Heading(L["Grid size"], L["In UI pixels. Used by Grid snapping; the grid shows in every mode."])
+    local sizes = {}
+    for _, size in ipairs(Layout.GRID_SIZES) do
+        sizes[#sizes + 1] = { value = size, text = string.format(L["%d px"], size) }
+    end
+    local size = Kit.Segmented(body, sizes, 360, function() return o.grid end, function(v) Layout.SetOption("grid", v) end)
+    flow.Add(size, 26, 22)
+
+    local ui = Tile(body, "UnitFrame", L["Game frames"], L["Line up with the game's frames too: unit frames, minimap, chat, action bars, quest tracker."],
+        function() return o.ui == true end, function(v) Layout.SetOption("ui", v) end)
+    local lock = Tile(body, "Shield", L["Lock positions"], L["The stream chat and the Deck can't be dragged (edit layout still moves them)."],
+        function() return Layout.Locked() end, function(v) Layout.SetOption("locked", v) end)
+    flow.Add(ui, 0, 0)
+    lock:SetPoint("TOPLEFT", ui, "TOPRIGHT", 12, 0)
+    flow.Space(TILE_H + 22)
+
+    flow.Heading(L["Put back"])
+    local chat = Kit.Button(body, L["Stream chat"], 150, 30, "ghost", function()
+        OA.StreamChat.ResetPosition()
+    end)
+    flow.Add(chat, 30, 12)
+    local deck = Kit.Button(body, L["Deck"], 150, 30, "ghost", function()
+        OA.Deck.ResetPosition()
+    end)
+    deck:SetPoint("LEFT", chat, "RIGHT", 10, 0)
+    flow.Finish()
+
+    OnRefresh(function()
+        o = Layout.Options()
+        edit.label:SetText(Layout.IsEditing() and L["Done"] or L["Edit layout"])
+        snap:Refresh(true)
+        size:Refresh(true)
+        size:SetAlpha(o.snap == "grid" and 1 or 0.6)
+    end)
+end
+
+-- The theme's touches over the finished frame: a viewfinder's corner brackets and thirds lines,
+-- a film strip's sprocket holes along the bottom.
+local function Decorate(frame)
+    local look = Kit.Theme()
+    local over = CreateFrame("Frame", nil, frame)
+    over:SetAllPoints()
+    over:SetFrameLevel(frame:GetFrameLevel() + 60)
+    if look.corners then
+        Kit.Corners(over, 18, 2, { C.text[1], C.text[2], C.text[3], 0.85 }, 6)
+    end
+    if look.thirds then
+        local wide = W - RAIL
+        for i = 1, 2 do
+            local line = Kit.Rect(frame, { 1, 1, 1, 0.035 }, "BACKGROUND", 1)
+            line:SetWidth(1)
+            line:SetPoint("TOP", frame, "TOPLEFT", RAIL + wide * i / 3, -HEADER)
+            line:SetPoint("BOTTOM", frame, "BOTTOMLEFT", RAIL + wide * i / 3, STATUS)
+        end
+        for i = 1, 2 do
+            local line = Kit.Rect(frame, { 1, 1, 1, 0.035 }, "BACKGROUND", 1)
+            line:SetHeight(1)
+            local y = STATUS + (H - HEADER - STATUS) * i / 3
+            line:SetPoint("LEFT", frame, "BOTTOMLEFT", RAIL, y)
+            line:SetPoint("RIGHT", frame, "BOTTOMRIGHT", 0, y)
+        end
+    end
+    if look.sprockets then
+        local holes = Kit.Band(over, "Sprocket", C.line, "ARTWORK")
+        holes:SetPoint("BOTTOMLEFT", 0, 0)
+        holes:SetPoint("BOTTOMRIGHT", 0, 0)
+        holes:SetHeight(8)
+    end
+end
+
+---------------------------------------------------------------------------------------------- look page
+
+local LOOKS = {
+    viewfinder = { L["Viewfinder"], L["A camera screen: corner brackets, thirds lines, REC and STBY, camera-menu highlights in amber."] },
+    mixer = { L["Vision mixer"], L["A broadcast desk: Program and Preview tally, lit keys, fader caps."] },
+    slate = { L["Film slate"], L["A clapperboard: chalk lines, clapper stripes, film-strip edges, TAKE and CUT."] },
+    studio = { L["Studio"], L["The plain dark console with one red light."] },
+}
+
+-- A tiny sketch of a theme: its console colors, rail highlight and touches.
+local function Sketch(card, t)
+    local function Col(name, a)
+        local c = Kit.ThemeColor(t, name)
+        return { c[1], c[2], c[3], a or 1 }
+    end
+    local box = CreateFrame("Frame", nil, card)
+    box:SetSize(120, 74)
+    box:SetPoint("LEFT", 12, 0)
+    local bg = Kit.Rect(box, Col("bg"), "BACKGROUND")
+    bg:SetAllPoints()
+    Kit.Border(box, Col("line"))
+    local rail = Kit.Rect(box, Col("rail"), "BORDER")
+    rail:SetPoint("TOPLEFT", 1, -10)
+    rail:SetPoint("BOTTOMLEFT", 1, 1)
+    rail:SetWidth(34)
+    for i = 1, 4 do
+        local row = Kit.Rect(box, i == 2 and (t.fillSelect and Col("accent") or Col("card")) or Col("raised", 0.6), "ARTWORK")
+        row:SetSize(i == 2 and 32 or 22, 6)
+        row:SetPoint("TOPLEFT", i == 2 and 2 or 6, -14 - (i - 1) * 12)
+        if i == 2 and not t.fillSelect then
+            local mark = Kit.Rect(box, Col("accent"), "OVERLAY")
+            mark:SetSize(2, 6)
+            mark:SetPoint("TOPLEFT", row, "TOPLEFT")
+        end
+    end
+    for i = 1, 2 do
+        local tile = Kit.Rect(box, Col("card"), "ARTWORK")
+        tile:SetSize(36, 22)
+        tile:SetPoint("TOPLEFT", 40 + (i - 1) * 40, -18)
+        local lit = Kit.Rect(box, Col("accent"), "OVERLAY")
+        if t.tileTop then
+            lit:SetSize(36, 2)
+            lit:SetPoint("TOPLEFT", tile, "TOPLEFT")
+        else
+            lit:SetSize(2, 22)
+            lit:SetPoint("TOPLEFT", tile, "TOPLEFT")
+        end
+    end
+    local slider = Kit.Rect(box, Col("raised"), "ARTWORK")
+    slider:SetSize(76, 2)
+    slider:SetPoint("TOPLEFT", 40, -54)
+    local fill = Kit.Rect(box, Col("accent"), "OVERLAY")
+    fill:SetSize(44, 2)
+    fill:SetPoint("TOPLEFT", slider, "TOPLEFT")
+    local tally = Kit.Shape(box, "Dot", Col("red"), "OVERLAY")
+    tally:SetSize(5, 5)
+    tally:SetPoint("TOPRIGHT", -6, -3)
+    if t.stripes then
+        local band = Kit.Band(box, "Stripes", Col("text"), "OVERLAY")
+        band:SetPoint("TOPLEFT", 1, -1)
+        band:SetPoint("TOPRIGHT", -1, -1)
+        band:SetHeight(6)
+    end
+    if t.corners then
+        Kit.Corners(box, 8, 1, Col("text"), 3)
+    end
+    if t.keys then
+        local key = Kit.Rect(box, Col("red"), "OVERLAY")
+        key:SetSize(16, 5)
+        key:SetPoint("TOPLEFT", 40, -3)
+        local key2 = Kit.Rect(box, Col("tally"), "OVERLAY")
+        key2:SetSize(16, 5)
+        key2:SetPoint("LEFT", key, "RIGHT", 3, 0)
+    end
+    return box
+end
+
+local function BuildLook()
+    local page = NewPage("look")
+    local flow = Flow(page)
+    local body = page.body
+    flow.Heading(L["Theme"], L["Picking another one reloads the interface, so everything is painted fresh."])
+    local cards = {}
+    local CARD_H = 98
+    local lastLeft
+    for i, t in ipairs(Kit.THEMES) do
+        local info = LOOKS[t.key]
+        local card = CreateFrame("Button", nil, body)
+        card:SetSize(TILE_W, CARD_H)
+        local bg = Kit.Rect(card, C.card, "BACKGROUND")
+        bg:SetAllPoints()
+        card.edges = Kit.Border(card)
+        Sketch(card, t)
+        local name = Kit.Text(card, 15, C.text)
+        name:SetPoint("TOPLEFT", 144, -14)
+        name:SetText(info[1])
+        local desc = Kit.Text(card, 11, C.muted)
+        desc:SetPoint("TOPLEFT", name, "BOTTOMLEFT", 0, -6)
+        desc:SetPoint("RIGHT", card, "RIGHT", -12, 0)
+        desc:SetWordWrap(true)
+        desc:SetMaxLines(4)
+        desc:SetText(info[2])
+        card.badge = Kit.Text(card, 10, C.accent)
+        card.badge:SetPoint("BOTTOMRIGHT", -10, 8)
+        card:SetScript("OnEnter", function() bg:SetColorTexture(unpack(C.raised)) end)
+        card:SetScript("OnLeave", function() bg:SetColorTexture(unpack(C.card)) end)
+        card:SetScript("OnClick", function()
+            if (OA.db.look or "viewfinder") == t.key then
+                return
+            end
+            OA.db.look = t.key
+            UI.Refresh()
+            StaticPopup_Show("ONAIR_LOOK", info[1])
+        end)
+        card.key = t.key
+        cards[#cards + 1] = card
+        if i % 2 == 1 then
+            flow.Add(card, 0, 0)
+            lastLeft = card
+        else
+            card:SetPoint("TOPLEFT", lastLeft, "TOPRIGHT", 12, 0)
+            flow.Space(CARD_H + 12)
+        end
+    end
+    flow.Finish()
+
+    OnRefresh(function()
+        local chosen = OA.db.look or "viewfinder"
+        local active = Kit.Theme().key
+        for _, card in ipairs(cards) do
+            local on = card.key == chosen
+            Kit.SetBorderColor(card.edges, on and C.accent or C.line)
+            if card.key == active then
+                card.badge:SetText(L["IN USE"])
+            elseif on then
+                card.badge:SetText(L["AFTER RELOAD"])
+            else
+                card.badge:SetText("")
+            end
+        end
     end)
 end
 
@@ -1605,16 +1860,25 @@ local function Build()
     local bg = Kit.Rect(console, C.bg, "BACKGROUND", -8)
     bg:SetAllPoints()
     Kit.Border(console, C.line)
-    -- A thin red line on top: the studio's "recording" stripe.
-    local stripe = Kit.Rect(console, C.red, "OVERLAY")
-    stripe:SetPoint("TOPLEFT")
-    stripe:SetPoint("TOPRIGHT")
-    stripe:SetHeight(2)
+    -- On top: the studio's thin red "recording" stripe, or the slate's clapper stripes.
+    local look = Kit.Theme()
+    if look.stripes then
+        local band = Kit.Band(console, "Stripes", C.text, "OVERLAY")
+        band:SetPoint("TOPLEFT")
+        band:SetPoint("TOPRIGHT")
+        band:SetHeight(8)
+    elseif not look.corners then
+        local stripe = Kit.Rect(console, C.red, "OVERLAY")
+        stripe:SetPoint("TOPLEFT")
+        stripe:SetPoint("TOPRIGHT")
+        stripe:SetHeight(2)
+    end
     tinsert(UISpecialFrames, "OnAirConsole")
 
     BuildHeader(console)
     BuildRail(console)
     BuildStatus(console)
+    Decorate(console)
     BuildBroadcast()
     BuildStream()
     BuildMoments()
@@ -1624,6 +1888,8 @@ local function Build()
     BuildShield()
     BuildCamera()
     BuildDeck()
+    BuildLook()
+    BuildLayout()
     BuildAbout()
     console:Hide()
 end

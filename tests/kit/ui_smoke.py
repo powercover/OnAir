@@ -35,7 +35,7 @@ function base:GetParent() return self._parent end
 function base:SetParent(p) self._parent = p end
 function base:IsForbidden() return false end
 function base:Show() self._shown = true; if self._scripts and self._scripts.OnShow then self._scripts.OnShow(self) end end
-function base:Hide() self._shown = false end
+function base:Hide() local was = self._shown; self._shown = false; if was and self._scripts and self._scripts.OnHide then self._scripts.OnHide(self) end end
 function base:SetShown(v) if v then self:Show() else self:Hide() end end
 function base:IsShown() return self._shown end
 function base:IsVisible() return self._shown end
@@ -248,6 +248,12 @@ Constants = { CharacterNameSeparatorConsts = { CHARACTERNAME_SURNAME_SEPARATOR =
 
 DRIVE = r"""
 local OA = ...
+-- the very first edit layout (bar built on the spot) must stay on
+local start = OA.Layout.Start
+OA.Layout.Start = function(...)
+  start(...)
+  if FIRST_EDIT == nil then FIRST_EDIT = OA.Layout.IsEditing() end
+end
 -- Runs every OnUpdate (tweens, watchers) for a while, 50 ms a frame.
 local function run(seconds)
   for _ = 1, math.ceil(seconds / 0.05) do
@@ -299,7 +305,6 @@ local function walk(o, seen)
 end
 walk(OnAirConsole, {})
 walk(OnAirMinimapButton, {})
-walk(OnAirBadge, {})
 -- the walk typed into every field and clicked every choice: back to known settings
 OA.db.npc = { mode = "real", enemy = "Enemy", friendly = "NPC", boss = "Boss" }
 
@@ -473,6 +478,7 @@ UI.HideConsole()
 
 -- snapping: center lines first, then grid lines, else a 4 px step
 UIParent._w, UIParent._h = 1920, 1080
+OA.db.layout = { snap = "grid", picked = true, grid = 32, ui = false }
 local piece = CreateFrame("Frame", nil, UIParent); piece._w, piece._h = 100, 20
 local function at(left, bottom) piece.GetLeft = function() return left end; piece.GetBottom = function() return bottom end end
 at(905, 300); local x1, _, gx1 = OA.Layout.SnapPosition(piece)
@@ -504,6 +510,61 @@ IsShiftKeyDown = function() return true end
 at(301, 300); local x6, _, gx6 = OA.Layout.SnapPosition(piece)
 SNAP_SHIFT = (x6 == 301 and gx6 == nil)
 IsShiftKeyDown = function() return false end
+-- Guides: no grid; Free: nothing
+OA.Layout.SetOption("snap", "guides")
+at(294, 300); local x7, _, gx7 = OA.Layout.SnapPosition(piece)
+at(905, 300); local x8, _, gx8 = OA.Layout.SnapPosition(piece)
+OA.Layout.SetOption("snap", "free")
+at(905, 300); local x9, _, gx9 = OA.Layout.SnapPosition(piece)
+OA.Layout.SetOption("snap", "grid")
+SNAP_MODES = (x7 == 294 and gx7 == nil) and (x8 == 910 and gx8 == 960) and (x9 == 905 and gx9 == nil)
+-- live drag: the Deck sticks to the center line while it moves, and its buttons are locked
+OA.Layout.Start(); run(1)
+local deck = OnAirDeck
+deck._w, deck._h = 200, 32
+deck.GetLeft = function() return 700 end; deck.GetBottom = function() return 500 end
+local placed
+deck.SetPoint = function(self, p, rel, rp, x, y) placed = { p, x, y } end
+GetCursorPosition = function() return 600, 400 end
+deck._scripts.OnDragStart(deck)
+GetCursorPosition = function() return 757, 400 end
+run(0.1)
+local dragged = placed and placed[1] == "BOTTOMLEFT" and placed[2] == 860
+local orbitBefore = OA.Camera.IsOrbiting()
+for _, c in ipairs(deck._children) do
+  if c._kind == "Button" and c._scripts and c._scripts.OnClick then c._scripts.OnClick(c, "LeftButton") end
+end
+local locked = OA.Camera.IsOrbiting() == orbitBefore and OA.Layout.IsEditing()
+deck._scripts.OnDragStop(deck)
+OA.Layout.Stop(); run(1)
+GetCursorPosition = function() return 600, 400 end
+LIVE_DRAG = dragged and locked
+
+-- hover a Deck button a second: its quick panel opens; every control in it works
+local opened = 0
+for _, c in ipairs(deck._children) do
+  if c._kind == "Button" and c._scripts and c._scripts.OnEnter then
+    c._scripts.OnEnter(c); run(1.1)
+    if OnAirDeckPanel and OnAirDeckPanel:IsShown() then
+      opened = opened + 1
+      walk(OnAirDeckPanel, {})
+    end
+    c._scripts.OnLeave(c); run(0.6)
+  end
+end
+OA.Camera.StopOrbit()
+PANELS_OPENED = opened
+PANEL_CLOSES = not OnAirDeckPanel:IsShown()
+-- locked: the Deck won't drag outside edit layout
+OA.Layout.SetOption("locked", true)
+local moved = false
+deck.StartMoving = function() moved = true end
+deck._scripts.OnDragStart(deck)
+LOCK_OK = not moved
+OA.Layout.SetOption("locked", false)
+deck._scripts.OnDragStart(deck)
+LOCK_OK = LOCK_OK and moved
+deck._scripts.OnDragStop(deck)
 -- opening and closing again animate to the end without leftovers
 OA.Layout.Start(); run(1)
 local opened = OnAirLayoutBar:IsShown() and OnAirLayoutBar:GetAlpha() == 1
@@ -530,9 +591,10 @@ OA.EndLive()
 """
 
 
-def run(toc):
+def run(toc, look="viewfinder"):
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(MOCK, toc)
+    lua.execute('OnAirDB = { look = "%s" }' % look)
     # Track every frame so events can be fired at the ones that registered them.
     lua.execute(r"""
     FRAMES = {}
@@ -552,6 +614,8 @@ def run(toc):
     for rel in files:
         lua.execute(open(os.path.join(ROOT, rel), encoding="utf-8").read(), "OnAir", oa)
     lua.execute(DRIVE, oa)
+    if oa.Kit.Theme().key != look:
+        raise RuntimeError("theme not applied: " + look)
     g = lua.globals()
     guarded = [g.GUARDED[i] for i in range(1, len(g.GUARDED) + 1)]
     if guarded:
@@ -562,18 +626,22 @@ def run(toc):
                               "NPC_GENERIC", "NPC_AFTER_RESET", "NPC_BOSS", "NPC_HIDDEN_ALPHA", "NPC_CVAR",
                               "DECK_UI_HIDDEN", "DECK_STAYS", "LAYOUT_ON", "SNAP_CENTER", "SNAP_GRID",
                               "SNAP_FREE", "DONE_OK", "SNAP_RIGHT_CENTER", "SNAP_PIECE",
-                              "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS")}
+                              "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS",
+                              "SNAP_MODES", "LIVE_DRAG", "FIRST_EDIT", "PANELS_OPENED",
+                              "PANEL_CLOSES", "LOCK_OK")}
 
 
 if __name__ == "__main__":
     failures = 0
-    for label, toc in (("Retail", 120100), ("Forever", 16001)):
+    for label, toc, look in (("Retail", 120100, "viewfinder"), ("Forever", 16001, "viewfinder"),
+                             ("Retail / mixer", 120100, "mixer"), ("Retail / slate", 120100, "slate"),
+                             ("Retail / studio", 120100, "studio")):
         try:
-            results = run(toc)
+            results = run(toc, look)
             print(label)
             for k, v in results.items():
                 print(f"  {k}: {v!r}")
-            if label == "Retail":
+            if label.startswith("Retail"):
                 checks = [
                     ("Bob" not in results["RESULT_TEXT"] and "Stranger" not in results["RESULT_TEXT"]
                      and "|K" not in results["RESULT_TEXT"], "text hook scrubbed"),
@@ -609,6 +677,11 @@ if __name__ == "__main__":
                     (results["LAYOUT_ANIM"], "edit layout animates in and out"),
                     (results["ORBIT_CLICKS"], "orbit: left / right / again / middle on the Deck"),
                     (results["ORBIT_STOPS"], "orbit stops on movement and the mouse (when set)"),
+                    (results["FIRST_EDIT"], "the first edit layout stays on (snaps, locks the Deck)"),
+                    (results["PANELS_OPENED"] == 5 and results["PANEL_CLOSES"], "Deck quick panels open on hover (5) and close"),
+                    (results["LOCK_OK"], "Lock positions stops dragging"),
+                    (results["SNAP_MODES"], "snapping modes: Guides skips the grid, Free skips all"),
+                    (results["LIVE_DRAG"], "Deck sticks to a guide while dragged; its buttons are locked"),
                 ]
                 for ok, what in checks:
                     print(f"  {'ok  ' if ok else 'FAIL'} {what}")

@@ -313,7 +313,7 @@ function Camera.StartOrbit(dir)
     if orbiting then
         Call(MOVE[orbiting].stop)
     end
-    if not Call(MOVE[dir].start, DB().orbitSpeed or 0.05) then
+    if not Call(MOVE[dir].start, DB().orbitSpeed or 0.1) then
         orbiting = nil
         return
     end
@@ -340,6 +340,7 @@ end
 
 function Camera.SetOrbitSpeed(speed)
     DB().orbitSpeed = speed
+    DB().orbitSpeedSet = true
     if orbiting then
         Call(MOVE[orbiting].stop)
         Call(MOVE[orbiting].start, speed)
@@ -347,6 +348,11 @@ function Camera.SetOrbitSpeed(speed)
 end
 
 function Camera.Init()
+    -- The old default (5%) moves up to the new one (10%), unless you picked a speed yourself.
+    local db = DB()
+    if db.orbitSpeed == 0.05 and not db.orbitSpeedSet then
+        db.orbitSpeed = 0.1
+    end
     -- Left applied by a session that ended without restoring (a crash): mode off means put back.
     if DB().saved and not Camera.Active() then
         Restore()

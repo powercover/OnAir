@@ -1,7 +1,7 @@
 local _, OA = ...
 
 -- Moments: a timeline of the broadcast for whoever edits the video. Going live starts a clock at
--- 00:00 (with a short "clapper" flash on screen, so the footage shows the exact start), and the
+-- 00:00 (with a short ON AIR slate on screen, so the footage shows the exact start), and the
 -- big moments are marked on their own: bosses, keys, deaths, levels, achievements, epic loot,
 -- PvP. A key binding adds your own. Each session exports as YouTube chapters or a marker list.
 OA.Moments = {}
@@ -81,30 +81,136 @@ function Moments.Format(seconds, forceHours)
     return string.format("%02d:%02d", m, s)
 end
 
-local flash
+-- The slate at 00:00: a thin red tally frame around the screen and a small card (clapper,
+-- ON AIR, 00:00) that pops in, holds a second and fades. Clear enough to find 00:00 in the
+-- footage, calm enough not to blind anyone. On the world frame, so it shows with the UI hidden.
+-- Each theme plays it its own way: a viewfinder's brackets close in and lock focus, a vision
+-- mixer wipes across, a film slate's clapper arm snaps shut.
+local slate
+local SLATE_TIME = 1.7
 
-local function Flash()
-    if not flash then
-        flash = CreateFrame("Frame", nil, UIParent)
-        flash:SetAllPoints(UIParent)
-        flash:SetFrameStrata("FULLSCREEN_DIALOG")
-        local white = flash:CreateTexture(nil, "BACKGROUND")
-        white:SetAllPoints()
-        white:SetColorTexture(1, 1, 1, 1)
-        local clapper = Kit.Icon(flash, "Clapper", 96, { 0.05, 0.05, 0.06, 1 })
-        clapper:SetPoint("CENTER", 0, 30)
-        local text = Kit.Text(flash, 30, { 0.05, 0.05, 0.06, 1 })
-        text:SetPoint("TOP", clapper, "BOTTOM", 0, -14)
-        text:SetText("00:00  " .. L["ON AIR"])
-        flash:Hide()
+local function Ease(t)
+    local inv = 1 - math.min(1, math.max(0, t))
+    return 1 - inv * inv * inv
+end
+
+local function BuildSlate()
+    local look = Kit.Theme()
+    slate = CreateFrame("Frame", nil, WorldFrame)
+    slate:SetAllPoints(WorldFrame)
+    slate:SetFrameStrata("FULLSCREEN_DIALOG")
+    slate.edges = {}
+    if look.corners then
+        slate.screenCorners = Kit.Corners(slate, 70, 3, C.red, 28, "ARTWORK")
     end
-    flash:Show()
-    Kit.Tween(flash, 1, 0, 0.45, function(p)
-        flash:SetAlpha(p)
-        if p <= 0 then
-            flash:Hide()
+    for _, spec in ipairs({ { 3, 1 }, { 12, 0.12 } }) do
+        local size, alpha = spec[1], spec[2]
+        for _, side in ipairs(look.corners and {} or { "TOP", "BOTTOM", "LEFT", "RIGHT" }) do
+            local t = slate:CreateTexture(nil, "ARTWORK")
+            t:SetColorTexture(C.red[1], C.red[2], C.red[3], alpha)
+            if side == "TOP" or side == "BOTTOM" then
+                t:SetPoint(side .. "LEFT")
+                t:SetPoint(side .. "RIGHT")
+                t:SetHeight(size)
+            else
+                t:SetPoint("TOP" .. side)
+                t:SetPoint("BOTTOM" .. side)
+                t:SetWidth(size)
+            end
         end
-    end)
+    end
+    local card = CreateFrame("Frame", nil, slate)
+    card:SetSize(250, 76)
+    local bg = Kit.Rect(card, { C.bg[1], C.bg[2], C.bg[3], 0.94 }, "BACKGROUND")
+    bg:SetAllPoints()
+    Kit.Border(card, C.redDeep)
+    local accent = Kit.Rect(card, C.red, "ARTWORK")
+    accent:SetPoint("TOPLEFT")
+    accent:SetPoint("BOTTOMLEFT")
+    accent:SetWidth(3)
+    local clapper = Kit.Icon(card, "Clapper", 36, C.text)
+    clapper:SetPoint("LEFT", 20, 0)
+    local dot = Kit.Shape(card, "Dot", C.red, "ARTWORK")
+    dot:SetSize(10, 10)
+    dot:SetPoint("TOPLEFT", clapper, "TOPRIGHT", 16, -4)
+    local title = Kit.Text(card, 22, C.text)
+    title:SetPoint("LEFT", dot, "RIGHT", 8, 0)
+    title:SetText(Kit.Word("live"))
+    local clock = Kit.Text(card, 13, C.muted)
+    clock:SetPoint("TOPLEFT", dot, "BOTTOMLEFT", 0, -10)
+    clock:SetText("00:00  " .. L["rolling"])
+    slate.card, slate.clapper, slate.dot = card, clapper, dot
+    if look.corners then
+        slate.focus = Kit.Corners(card, 14, 2, C.text, 0)
+    end
+    if look.keys then
+        slate.wipe = slate:CreateTexture(nil, "ARTWORK")
+        slate.wipe:SetColorTexture(1, 1, 1, 0.14)
+        slate.wipe:SetWidth(140)
+        slate.wipe:SetPoint("TOP")
+        slate.wipe:SetPoint("BOTTOM")
+    end
+    if look.stripes then
+        local base = Kit.Band(card, "Stripes", C.text, "ARTWORK")
+        base:SetPoint("BOTTOMLEFT", card, "TOPLEFT", 0, 0)
+        base:SetPoint("BOTTOMRIGHT", card, "TOPRIGHT", 0, 0)
+        base:SetHeight(12)
+        slate.arm = Kit.Band(card, "Stripes", C.text, "OVERLAY")
+        slate.arm:SetSize(250, 12)
+    end
+    slate:Hide()
+end
+
+local function Slate()
+    if not slate then
+        BuildSlate()
+    end
+    -- The world frame doesn't follow the UI scale: match it.
+    slate.card:SetScale(UIParent:GetEffectiveScale() / slate:GetEffectiveScale())
+    slate:SetAlpha(0)
+    slate:Show()
+    Kit.Tween(slate, 0, SLATE_TIME, SLATE_TIME, function(t)
+        local out = 1 - Ease((t - (SLATE_TIME - 0.45)) / 0.45)
+        slate:SetAlpha(math.min(Ease(t / 0.15), out))
+        local card = slate.card
+        local grow = Ease(t / 0.3)
+        card:ClearAllPoints()
+        card:SetPoint("CENTER", slate, "CENTER", 0, 140 + 10 * (1 - out))
+        card:SetAlpha(grow)
+        slate.clapper:SetRotation(-0.35 * (1 - Ease((t - 0.1) / 0.15)))
+        slate.dot:SetAlpha(0.55 + 0.45 * math.abs(math.cos(t * 4)))
+        -- Viewfinder: the brackets close in on the card, then lock (turn red).
+        if slate.focus then
+            local lock = Ease(t / 0.35)
+            slate.focus.Place(-40 * (1 - lock))
+            local color = lock >= 0.99 and C.red or C.text
+            for _, b in ipairs(slate.focus) do
+                b.h:SetColorTexture(unpack(color))
+                b.v:SetColorTexture(unpack(color))
+            end
+            slate.screenCorners.Place(28 + 40 * (1 - Ease(t / 0.4)))
+        end
+        -- Vision mixer: one wipe across the screen.
+        if slate.wipe then
+            local sw = slate:GetWidth()
+            slate.wipe:SetPoint("LEFT", slate, "LEFT", -140 + (sw + 140) * Ease(t / 0.5), 0)
+            slate.wipe:SetAlpha(t < 0.5 and 1 or 0)
+        end
+        -- Film slate: the arm drops from open onto the base and claps.
+        if slate.arm then
+            local clap = Ease((t - 0.05) / 0.22)
+            slate.arm:ClearAllPoints()
+            slate.arm:SetPoint("BOTTOMLEFT", card, "TOPLEFT", 0, 12 + 22 * (1 - clap))
+            slate.arm:SetRotation(0.22 * (1 - clap))
+        end
+        if t >= SLATE_TIME then
+            slate:Hide()
+        end
+    end, "linear")
+end
+
+function Moments.SlateShowing()
+    return slate ~= nil and slate:IsShown()
 end
 
 -- A new session at 00:00. After a /reload while live, the running session carries on.
@@ -123,7 +229,7 @@ function Moments.Start(atLogin)
     end
     Moments.Add("start", L["Broadcast starts"], true)
     if db.flash ~= false then
-        Flash()
+        Slate()
     end
 end
 

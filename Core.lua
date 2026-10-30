@@ -31,10 +31,11 @@ local DEFAULTS = {
     counters = {},
     myChars = {},
     toast = true,
-    badge = false,
     minimap = { show = true, angle = 200 },
     -- Camera values left nil mean "the game's default".
-    camera = { mode = "off", preset = "default", orbitSpeed = 0.05, orbitDir = "left",
+    look = "viewfinder",
+    layout = { snap = "guides", grid = 32, ui = true, locked = false },
+    camera = { mode = "off", preset = "default", orbitSpeed = 0.1, orbitDir = "left",
         orbitStop = { move = true, mouse = true } },
     moments = { sessions = {}, auto = {}, flash = true, note = true, screenshot = false },
     shield = { whispers = true, reply = false, replyText = L["I'm live right now, so whispers are off. I'll read yours after the stream!"],
@@ -62,6 +63,7 @@ local function InitDB()
     OnAirDB = type(OnAirDB) == "table" and OnAirDB or {}
     Merge(OnAirDB, DEFAULTS)
     OA.db = OnAirDB
+    OA.Kit.ApplyTheme(OA.db.look)
 end
 
 -- Your character is always "me", on every character you log in with.
@@ -122,6 +124,19 @@ function OA.GoLive()
         OA.UI.Toast(true)
     end
 end
+
+StaticPopupDialogs["ONAIR_LOOK"] = {
+    text = L["Switch the look to %s? The interface reloads to repaint everything."],
+    button1 = L["Reload now"],
+    button2 = L["Later"],
+    OnAccept = function()
+        ReloadUI()
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
 
 StaticPopupDialogs["ONAIR_RELOAD"] = {
     text = L["Off the air. Real names come back in new text right away; a reload brings them back everywhere."],

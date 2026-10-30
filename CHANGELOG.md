@@ -7,7 +7,7 @@
   themes, or your own templates ({me}, {n}, {role}, {class}, {owner}), and fixed aliases.
 - Hides names in chat, nameplates and overhead names, tooltips, damage meters (Blizzard and EllesmereUI)
   and all interface text.
-- The console (/onair), a minimap button, an ON AIR badge, a go-live banner and key bindings.
+- The console (/onair), a minimap button, a go-live banner and key bindings.
   Left-click goes live or ends, right-click opens the console.
 - Stream chat: a clean chat window over yours while live, showing only what you pick (NPC talk, boss
   emotes and loot by default), names already aliased.
@@ -25,9 +25,24 @@
   tooltips and chat; names above heads switch off with them.
 - The Deck: a small control bar that stays with the UI hidden (Alt+Z): go live, hide the UI, camera
   presets, orbit, mark, edit layout, console. Sticks to edges and corners; stays, fades or tucks away.
-- Edit layout: a grid over the screen to place the badge, stream chat and Deck. Any side or the middle
-  of a piece snaps to the center lines, the screen edges and the other pieces (lit as you drag), sides
-  to the grid; Shift drops freely. Opening and closing it animate.
+- Edit layout: a grid over the screen to place the stream chat and the Deck. Pieces stick to lines
+  while you drag: any side or the middle onto the center lines, the screen edges, the other pieces and
+  (optionally) the game's own frames, lit as you go; sides onto the grid. Snapping Free, Guides or
+  Grid, grid 16 / 32 / 64 px, Shift drags freely. Its own Layout page; opening and closing animate.
+  Deck buttons are locked while editing.
+- Themes (console > Look): Viewfinder (default: corner brackets, thirds lines, REC / STBY, amber
+  camera-menu highlights, tick-scale sliders), Vision mixer (Program / Preview tally, lit keys, fader
+  caps), Film slate (clapper stripes, chalk lines, film-strip edges, TAKE / CUT) and Studio (the
+  plain console). The Deck, the stream chat, the banner, the go-live slate and edit layout follow
+  the theme: brackets lock focus, a wipe sweeps across, the clapper arm snaps shut. On a viewfinder
+  the thirds lines are snap guides too.
+- Deck quick panels: rest the mouse on a button for a second for its settings on the fly: clock,
+  preview and stream chat; camera mode, preset, zoom, field of view, shoulder; orbit direction, speed
+  and auto-stop; recent moments and Mark now; snapping, lock and how the Deck hides.
+- Lock positions: the stream chat and the Deck can't be dragged (edit layout still moves them). The
+  Deck has no grip strip any more: drag it from anywhere.
+- The Deck shows you're on air (glowing live button, red stripe); the separate ON AIR badge is gone.
+- Going live shows a short ON AIR slate with a thin red frame instead of a white flash.
 - Orbit either way round. On the Deck: left click orbits left, right click right, the same click again
   or a middle click stops. Optionally stops when you move or turn the camera with the mouse.
 - Preview: everything masked like live, without the clock, moments or Shield.

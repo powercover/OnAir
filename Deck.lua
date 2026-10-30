@@ -4,7 +4,8 @@ local _, OA = ...
 -- hangs off the world frame, not the UI), camera presets, orbit, mark a moment, edit the layout,
 -- the console. Drag it anywhere; near an edge it sticks flush to it (vertical on the sides), near
 -- two edges into the corner. It can stay put, fade after a moment, or tuck into its edge, leaving
--- a small tab with an arrow.
+-- a small tab with an arrow. Rest the mouse on a button for a second and a small panel opens
+-- with the settings worth changing mid-recording (orbit speed, camera preset, ...).
 OA.Deck = {}
 
 local Deck = OA.Deck
@@ -14,14 +15,16 @@ local L = OA.L
 local Utils = OA.Utils
 
 local SIZE = 30      -- one button
-local GRIP = 10      -- the drag strip
+local PAD = 3       -- around the buttons (the whole Deck is the drag handle)
+local LEAD = 0      -- a theme's mark before the buttons (the slate's stripes)
 local SNAP = 40      -- how close to an edge counts as "at" it
 local TAB = 14       -- what stays on screen when tucked
 
-local deck, grip, tab, buttons
+local deck, tab, buttons, lead, corners
 local tucked = 0     -- 0 = out, 1 = tucked away
 local alphaNow = 1
 local idle = 0
+local PanelWatch -- the quick panels' watcher (below)
 
 local function DB()
     return OA.db.deck
@@ -111,8 +114,8 @@ Deck.BUTTONS = {
         tip = function() return L["Adds a moment at the current timecode."] end,
         on = function() return false end,
         click = function() OA.Moments.Mark() end },
-    { key = "layout", icon = "Group", text = L["Edit layout"],
-        tip = function() return L["Move the badge, stream chat and Deck on a grid."] end,
+    { key = "layout", icon = "Layout", text = L["Edit layout"],
+        tip = function() return L["Move the stream chat and the Deck on a grid."] end,
         on = function() return OA.Layout and OA.Layout.IsEditing() end,
         click = function() OA.Layout.Toggle() end },
     { key = "console", icon = "Names", text = L["Console"],
@@ -139,6 +142,9 @@ local function Screen()
 end
 
 local function Place()
+    if OA.Layout and OA.Layout.Dragging() == deck then
+        return
+    end
     local db = DB()
     local pos = db.pos
     deck:ClearAllPoints()
@@ -177,31 +183,33 @@ local function Layout()
         end
     end
     local vertical = Vertical()
-    local length = GRIP + #list * SIZE + 4
+    local length = LEAD + PAD * 2 + #list * SIZE
     if vertical then
         deck:SetSize(SIZE + 6, length)
     else
         deck:SetSize(length, SIZE + 6)
     end
-    grip:ClearAllPoints()
-    if vertical then
-        grip:SetPoint("TOPLEFT", 3, -2)
-        grip:SetPoint("TOPRIGHT", -3, -2)
-        grip:SetHeight(GRIP - 2)
-    else
-        grip:SetPoint("TOPLEFT", 2, -3)
-        grip:SetPoint("BOTTOMLEFT", 2, 3)
-        grip:SetWidth(GRIP - 2)
-    end
     for i, b in ipairs(list) do
         b:ClearAllPoints()
         if vertical then
-            b:SetPoint("TOP", deck, "TOP", 0, -(GRIP + (i - 1) * SIZE))
+            b:SetPoint("TOP", deck, "TOP", 0, -(LEAD + PAD + (i - 1) * SIZE))
         else
-            b:SetPoint("LEFT", deck, "LEFT", GRIP + (i - 1) * SIZE + 1, 0)
+            b:SetPoint("LEFT", deck, "LEFT", LEAD + PAD + (i - 1) * SIZE, 0)
         end
     end
     -- The tab sits on the inner side of the docked edge, where the Deck peeks out when tucked.
+    if lead then
+        lead:ClearAllPoints()
+        if vertical then
+            lead:SetPoint("TOPLEFT", 1, -1)
+            lead:SetPoint("TOPRIGHT", -1, -1)
+            lead:SetHeight(LEAD - 2)
+        else
+            lead:SetPoint("TOPLEFT", 1, -1)
+            lead:SetPoint("BOTTOMLEFT", 1, 1)
+            lead:SetWidth(LEAD - 2)
+        end
+    end
     tab:ClearAllPoints()
     local edge = DB().edge
     if edge == "LEFT" then
@@ -231,11 +239,7 @@ end
 -- After a drag: stick to an edge or a corner when close, else stay where dropped.
 local function Snap()
     local db = DB()
-    -- In edit layout, the grid and the center lines count too (along the docked edge).
-    local gridX, gridY
-    if OA.Layout and OA.Layout.IsEditing() then
-        gridX, gridY = OA.Layout.SnapPosition(deck)
-    end
+    -- (In edit layout the Deck already stuck to the guides while it was dragged.)
     local sw, sh = Screen()
     local w, h = deck:GetWidth(), deck:GetHeight()
     local left, bottom = deck:GetLeft() or 0, deck:GetBottom() or 0
@@ -255,8 +259,8 @@ local function Snap()
         Layout()
         w, h = deck:GetWidth(), deck:GetHeight()
     end
-    local x = math.max(0, math.min(gridX or left, sw - w))
-    local y = math.max(0, math.min(gridY or bottom, sh - h))
+    local x = math.max(0, math.min(left, sw - w))
+    local y = math.max(0, math.min(bottom, sh - h))
     if nearX then
         x = dLeft <= dRight and 0 or sw - w
     end
@@ -293,12 +297,13 @@ end
 
 local function Watch(_, elapsed)
     local db = DB()
+    PanelWatch(elapsed)
     if OA.Layout and OA.Layout.IsEditing() then
         SetAlphaTo(1)
         SetTucked(0)
         return
     end
-    if deck:IsMouseOver(8, -8, -8, 8) then
+    if deck:IsMouseOver(8, -8, -8, 8) or Deck.PanelOpen() then
         idle = 0
         SetAlphaTo(1)
         SetTucked(0)
@@ -315,13 +320,410 @@ local function Watch(_, elapsed)
     end
 end
 
+---------------------------------------------------------------------------------------------- quick panels
+
+-- Rest the mouse on a button for a second: a small panel opens beside it with what's worth
+-- changing on the fly. It stays while the mouse is on the button or the panel; moving to another
+-- button with a panel switches over at once. Not in edit layout.
+local PANEL_W = 250
+local HOVER_DELAY = 1
+local LINGER = 0.35
+
+local panel, panelKey
+local hoverKey, hoverTime, away, tick = nil, 0, 0, 0
+local contents = {}
+
+-- A little vertical stack for a panel's controls.
+local function Stack(frame)
+    local y = -34
+    local stack = {}
+    function stack.Add(widget, height, gap)
+        widget:ClearAllPoints()
+        widget:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, y)
+        y = y - height - (gap or 10)
+    end
+    function stack.Height()
+        return -y + 2
+    end
+    return stack
+end
+
+-- A label with a switch on the right.
+local function Row(frame, stack, label, get, set)
+    local row = CreateFrame("Frame", nil, frame)
+    row:SetSize(PANEL_W - 24, 20)
+    local text = Kit.Text(row, 12, C.text)
+    text:SetPoint("LEFT")
+    text:SetText(label)
+    local switch = Kit.Switch(row, get, set)
+    switch:SetPoint("RIGHT")
+    stack.Add(row, 20, 8)
+    return switch
+end
+
+local SHORT_PRESETS = {
+    { value = "default", text = L["Default"] },
+    { value = "cinematic", text = L["Cinema"] },
+    { value = "shoulder", text = L["Shoulder"] },
+    { value = "wide", text = L["Wide"] },
+}
+
+local PANELS = {}
+
+PANELS.live = function(frame, stack, onRefresh)
+    local clock = Kit.Text(frame, 22, C.text)
+    stack.Add(clock, 24, 2)
+    local sub = Kit.Text(frame, 12, C.muted)
+    stack.Add(sub, 14, 12)
+    local preview = Row(frame, stack, L["Preview"],
+        function() return OA.live and OA.rehearsal end,
+        function() OA.TogglePreview() end)
+    local chat = Row(frame, stack, L["Stream chat"],
+        function() return OA.db.stream.enabled ~= false end,
+        function(v)
+            OA.db.stream.enabled = v
+            OA.StreamChat.Update()
+        end)
+    onRefresh(function()
+        if OA.live then
+            clock:SetText(OA.Moments.Format(OA.Moments.Elapsed()))
+            clock:SetTextColor(unpack(OA.rehearsal and C.amber or C.red))
+            sub:SetText(string.format(OA.rehearsal and L["PREVIEW  -  %d masked"] or L["ON AIR  -  %d masked"], OA.Names.Count()))
+        else
+            clock:SetText("00:00")
+            clock:SetTextColor(unpack(C.faint))
+            sub:SetText(L["OFF AIR"])
+        end
+        preview:Refresh(true)
+        chat:Refresh(true)
+        -- No preview while really live: end the broadcast first.
+        preview:SetAlpha((OA.live and not OA.rehearsal) and 0.4 or 1)
+    end)
+end
+
+PANELS.camera = function(frame, stack, onRefresh)
+    local Camera = OA.Camera
+    local cam = OA.db.camera
+    local mode = Kit.Segmented(frame, {
+        { value = "off", text = L["Off"] },
+        { value = "always", text = L["Always"] },
+        { value = "live", text = L["While live"] },
+    }, PANEL_W - 24, function() return cam.mode end, function(v)
+        cam.mode = v
+        Camera.Update()
+    end)
+    stack.Add(mode, 26, 10)
+    local preset = Kit.Segmented(frame, SHORT_PRESETS, PANEL_W - 24, function() return cam.preset end, function(v)
+        if cam.mode == "off" then
+            cam.mode = "always"
+        end
+        Camera.UsePreset(v)
+    end)
+    stack.Add(preset, 26, 12)
+    local sliders = {}
+    for _, key in ipairs({ "zoom", "fov", "shoulder" }) do
+        for _, setting in ipairs(Camera.SETTINGS) do
+            if setting.key == key then
+                local slider = Kit.Slider(frame, PANEL_W - 24, setting.label, setting.min, setting.max, setting.step,
+                    function() return Camera.Get(key) end,
+                    function(v) Camera.Set(key, v) end,
+                    setting.format)
+                stack.Add(slider, 40, 6)
+                sliders[#sliders + 1] = slider
+            end
+        end
+    end
+    onRefresh(function()
+        mode:Refresh(true)
+        preset:Refresh(true)
+        for _, slider in ipairs(sliders) do
+            slider:Refresh()
+        end
+    end)
+end
+
+PANELS.orbit = function(frame, stack, onRefresh)
+    local Camera = OA.Camera
+    local cam = OA.db.camera
+    local dir = Kit.Segmented(frame, {
+        { value = "left", text = L["Turn left"] },
+        { value = "right", text = L["Turn right"] },
+    }, PANEL_W - 24, function() return Camera.OrbitDirection() end, function(v)
+        Camera.SetOrbitDirection(v)
+    end)
+    stack.Add(dir, 26, 12)
+    local speed = Kit.Slider(frame, PANEL_W - 24, L["Orbit speed"], 0.01, 1, 0.01,
+        function() return cam.orbitSpeed or 0.1 end,
+        function(v) Camera.SetOrbitSpeed(v) end,
+        function(v) return string.format("%d%%", v * 100) end)
+    stack.Add(speed, 40, 8)
+    cam.orbitStop = cam.orbitStop or { move = true, mouse = true }
+    local move = Row(frame, stack, L["Stop when I move"],
+        function() return cam.orbitStop.move == true end, function(v) cam.orbitStop.move = v end)
+    local mouse = Row(frame, stack, L["Stop when I grab the camera"],
+        function() return cam.orbitStop.mouse == true end, function(v) cam.orbitStop.mouse = v end)
+    local go = Kit.Button(frame, L["Start orbit"], PANEL_W - 24, 26, "ghost", function()
+        Camera.ToggleOrbit()
+    end)
+    stack.Add(go, 26, 10)
+    onRefresh(function()
+        dir:Refresh(true)
+        speed:Refresh()
+        move:Refresh(true)
+        mouse:Refresh(true)
+        go.label:SetText(Camera.IsOrbiting() and L["Stop orbit"] or L["Start orbit"])
+    end)
+end
+
+PANELS.mark = function(frame, stack, onRefresh)
+    local head = Kit.Text(frame, 12, C.muted)
+    stack.Add(head, 14, 8)
+    local lines = {}
+    for i = 1, 3 do
+        local line = Kit.Text(frame, 12, C.text)
+        line:SetWidth(PANEL_W - 24)
+        stack.Add(line, 14, 4)
+        lines[i] = line
+    end
+    local mark = Kit.Button(frame, L["Mark now"], PANEL_W - 24, 26, "primary", function()
+        OA.Moments.Mark()
+    end)
+    stack.Add(mark, 26, 10)
+    local db = OA.db.moments
+    local shot = Row(frame, stack, L["Screenshot with each moment"],
+        function() return db.screenshot == true end, function(v) db.screenshot = v end)
+    onRefresh(function()
+        local session = OA.Moments.Current()
+        local list = (OA.live and session and session.moments) or {}
+        head:SetText(OA.live and string.format(L["%d moments"], #list) or L["Moments are marked while you're live."])
+        for i = 1, 3 do
+            local m = list[#list - i + 1]
+            lines[i]:SetText(m and (OA.Moments.Format(m.t) .. "  " .. m.text) or "")
+        end
+        mark:SetAlpha((OA.live and not OA.rehearsal) and 1 or 0.4)
+        shot:Refresh(true)
+    end)
+end
+
+PANELS.layout = function(frame, stack, onRefresh)
+    local Layout = OA.Layout
+    local snap = Kit.Segmented(frame, {
+        { value = "free", text = L["Free"] },
+        { value = "guides", text = L["Guides"] },
+        { value = "grid", text = L["Grid"] },
+    }, PANEL_W - 24, function() return Layout.Options().snap end, function(v) Layout.SetOption("snap", v) end)
+    stack.Add(snap, 26, 12)
+    local lock = Row(frame, stack, L["Lock positions"],
+        function() return Layout.Locked() end, function(v) Layout.SetOption("locked", v) end)
+    local label = Kit.Text(frame, 12, C.muted)
+    label:SetText(L["The Deck when idle"])
+    stack.Add(label, 14, 6)
+    local db = DB()
+    local hide = Kit.Segmented(frame, {
+        { value = "never", text = L["Stay"] },
+        { value = "fade", text = L["Fade"] },
+        { value = "tuck", text = L["Tuck"] },
+    }, PANEL_W - 24, function() return db.hide end, function(v)
+        db.hide = v
+        Deck.Refresh()
+    end)
+    stack.Add(hide, 26, 10)
+    onRefresh(function()
+        snap:Refresh(true)
+        lock:Refresh(true)
+        hide:Refresh(true)
+    end)
+end
+
+local function BuildPanel()
+    panel = CreateFrame("Frame", "OnAirDeckPanel", deck)
+    panel:SetFrameStrata("DIALOG")
+    panel:SetFrameLevel(deck:GetFrameLevel() + 40)
+    panel:SetWidth(PANEL_W)
+    panel:SetClampedToScreen(true)
+    panel:EnableMouse(true)
+    local bg = Kit.Rect(panel, { C.bg[1], C.bg[2], C.bg[3], 0.97 }, "BACKGROUND")
+    bg:SetAllPoints()
+    Kit.Border(panel, C.line)
+    local accent = Kit.Rect(panel, C.accent, "ARTWORK")
+    accent:SetPoint("TOPLEFT")
+    accent:SetPoint("TOPRIGHT")
+    accent:SetHeight(1)
+    panel.icon = Kit.Icon(panel, "Orbit", 14, C.accent)
+    panel.icon:SetPoint("TOPLEFT", 12, -11)
+    panel.title = Kit.Text(panel, 12, C.text)
+    panel.title:SetPoint("LEFT", panel.icon, "RIGHT", 8, 0)
+    panel:Hide()
+end
+
+local function Content(key)
+    if contents[key] then
+        return contents[key]
+    end
+    local frame = CreateFrame("Frame", nil, panel)
+    frame:SetAllPoints()
+    local stack = Stack(frame)
+    local list = {}
+    PANELS[key](frame, stack, function(fn) list[#list + 1] = fn end)
+    local content = { frame = frame, height = stack.Height(), refresh = list }
+    contents[key] = content
+    return content
+end
+
+local function RefreshPanel()
+    local content = panelKey and contents[panelKey]
+    if content then
+        for _, fn in ipairs(content.refresh) do
+            Utils.Guard("deck panel " .. panelKey, fn)()
+        end
+    end
+end
+
+-- Beside the button, away from the docked edge (over or under it on a horizontal Deck).
+local function Anchor(button)
+    panel:ClearAllPoints()
+    local edge = DB().edge
+    if edge == "LEFT" then
+        panel:SetPoint("TOPLEFT", button, "TOPRIGHT", 10, 0)
+    elseif edge == "RIGHT" then
+        panel:SetPoint("TOPRIGHT", button, "TOPLEFT", -10, 0)
+    else
+        local _, y = deck:GetCenter()
+        local _, sh = Screen()
+        if (y or 0) > sh / 2 then
+            panel:SetPoint("TOP", button, "BOTTOM", 0, -10)
+        else
+            panel:SetPoint("BOTTOM", button, "TOP", 0, 10)
+        end
+    end
+end
+
+local function SpecOf(key)
+    for _, spec in ipairs(Deck.BUTTONS) do
+        if spec.key == key then
+            return spec
+        end
+    end
+end
+
+local function ShowPanel(key)
+    if not panel then
+        BuildPanel()
+    end
+    local content = Content(key)
+    for k, c in pairs(contents) do
+        c.frame:SetShown(k == key)
+    end
+    local spec = SpecOf(key)
+    panelKey = key
+    panel.title:SetText(spec.text:upper())
+    panel.icon:SetTexture(Utils.ICONS .. spec.icon)
+    panel:SetHeight(content.height)
+    Anchor(buttons[key])
+    RefreshPanel()
+    GameTooltip:Hide()
+    away, tick = 0, 0
+    if not panel:IsShown() then
+        panel:Show()
+    end
+    Kit.Tween(panel, panel:GetAlpha(), 1, 0.22, function(p) panel:SetAlpha(p) end, "quint")
+end
+
+local function HidePanel()
+    if panel and panelKey then
+        panelKey = nil
+        Kit.Tween(panel, panel:GetAlpha(), 0, 0.15, function(p)
+            panel:SetAlpha(p)
+            if p <= 0 and not panelKey then
+                panel:Hide()
+            end
+        end)
+    end
+end
+Deck.HidePanel = HidePanel
+
+function Deck.PanelOpen()
+    return panel ~= nil and panelKey ~= nil
+end
+
+-- Called from the Deck's watcher, every frame.
+PanelWatch = function(elapsed)
+    if OA.Layout.IsEditing() or DB().panels == false then
+        HidePanel()
+        return
+    end
+    if hoverKey and PANELS[hoverKey] then
+        if Deck.PanelOpen() then
+            if panelKey ~= hoverKey then
+                ShowPanel(hoverKey)
+            end
+        else
+            hoverTime = hoverTime + elapsed
+            if hoverTime >= HOVER_DELAY then
+                ShowPanel(hoverKey)
+            end
+        end
+    end
+    if Deck.PanelOpen() then
+        if panel:IsMouseOver() or buttons[panelKey]:IsMouseOver() then
+            away = 0
+        else
+            away = away + elapsed
+            if away >= LINGER then
+                HidePanel()
+            end
+        end
+        tick = tick + elapsed
+        if tick >= 0.25 then
+            tick = 0
+            RefreshPanel()
+        end
+    end
+end
+
+local function Hovered(key)
+    hoverKey, hoverTime = key, 0
+end
+
+-- For the console's Deck page.
+Deck.PANELS = PANELS
+
 ---------------------------------------------------------------------------------------------- build
 
+-- On air, the Deck says so (it took over from the old ON AIR badge): the live button glows and
+-- the top stripe turns solid red. In edit layout the buttons dim: they're locked.
+local stripe, liveGlow, livePulse
+
 local function Paint()
+    local editing = OA.Layout and OA.Layout.IsEditing()
     for _, spec in ipairs(Deck.BUTTONS) do
         local b = buttons[spec.key]
         local ok, on = pcall(spec.on)
-        b.icon:SetVertexColor(unpack(ok and on and C.red or C.text))
+        on = ok and on
+        local liveKey = spec.key == "live"
+        if b.key then
+            b.key:SetColorTexture(unpack((liveKey and on) and C.red or C.raised))
+        end
+        b.icon:SetVertexColor(unpack(on and (b.key and liveKey and C.accentInk or (liveKey and C.red or C.accent)) or C.text))
+        b.icon:SetAlpha(editing and 0.45 or 1)
+    end
+    if corners then
+        local color = OA.live and (OA.rehearsal and C.amber or C.red) or C.text
+        for _, bracket in ipairs(corners) do
+            bracket.h:SetColorTexture(unpack(color))
+            bracket.v:SetColorTexture(unpack(color))
+        end
+    end
+    if OA.live then
+        stripe:SetHeight(2)
+        stripe:SetAlpha(corners and 0 or 1)
+        liveGlow:Show()
+        livePulse:Play()
+    else
+        stripe:SetHeight(1)
+        stripe:SetAlpha(corners and 0 or 0.5)
+        livePulse:Stop()
+        liveGlow:Hide()
     end
 end
 
@@ -332,20 +734,25 @@ local function Build()
     deck:SetMovable(true)
     deck:EnableMouse(true)
     deck:RegisterForDrag("LeftButton")
-    local bg = Kit.Rect(deck, { 0.05, 0.055, 0.063, 0.94 }, "BACKGROUND")
+    local bg = Kit.Rect(deck, { C.bg[1], C.bg[2], C.bg[3], 0.94 }, "BACKGROUND")
     bg:SetAllPoints()
     Kit.Border(deck, C.line)
-    local stripe = Kit.Rect(deck, C.red, "ARTWORK")
+    stripe = Kit.Rect(deck, C.red, "ARTWORK")
     stripe:SetPoint("TOPLEFT")
     stripe:SetPoint("TOPRIGHT")
     stripe:SetHeight(1)
-
-    grip = CreateFrame("Frame", nil, deck)
-    for i = 1, 3 do
-        local dot = Kit.Shape(grip, "Dot", C.faint, "ARTWORK")
-        dot:SetSize(3, 3)
-        dot:SetPoint("CENTER", grip, "CENTER", 0, (i - 2) * 6)
-        grip["dot" .. i] = dot
+    -- The theme's touch: viewfinder brackets (red while recording), or the slate's stripes.
+    local look = Kit.Theme()
+    if look.corners then
+        stripe:SetAlpha(0)
+        local over = CreateFrame("Frame", nil, deck)
+        over:SetAllPoints()
+        over:SetFrameLevel(deck:GetFrameLevel() + 20)
+        corners = Kit.Corners(over, 7, 2, C.text, -1)
+    end
+    if look.stripes then
+        LEAD = 12
+        lead = Kit.Band(deck, "Stripes", C.text, "ARTWORK")
     end
 
     tab = CreateFrame("Frame", nil, deck)
@@ -360,7 +767,7 @@ local function Build()
     tab:SetAlpha(0)
 
     local function StartDrag()
-        if not (OA.Layout and OA.Layout.IsEditing()) and DB().locked then
+        if not OA.Layout.IsEditing() and OA.Layout.Locked() then
             return
         end
         deck:StartMoving()
@@ -368,8 +775,8 @@ local function Build()
     end
     local function StopDrag()
         deck:StopMovingOrSizing()
-        Snap()
         OA.Layout.Dropped("deck")
+        Snap()
     end
     deck:SetScript("OnDragStart", StartDrag)
     deck:SetScript("OnDragStop", StopDrag)
@@ -380,23 +787,36 @@ local function Build()
         b:SetSize(SIZE, SIZE)
         b:RegisterForClicks("AnyUp")
         b:RegisterForDrag("LeftButton")
-        local hl = Kit.Rect(b, C.hover, "BACKGROUND")
+        if Kit.Theme().keys then
+            b.key = Kit.Rect(b, C.raised, "BACKGROUND")
+            b.key:SetPoint("TOPLEFT", 2, -2)
+            b.key:SetPoint("BOTTOMRIGHT", -2, 2)
+        end
+        local hl = Kit.Rect(b, C.hover, "BACKGROUND", 1)
         hl:SetAllPoints()
         hl:SetAlpha(0)
         b.icon = Kit.Icon(b, spec.icon, 16, C.text)
         b.icon:SetPoint("CENTER")
         b:SetScript("OnEnter", function(self)
-            hl:SetAlpha(1)
+            local editing = OA.Layout and OA.Layout.IsEditing()
+            hl:SetAlpha(editing and 0 or 1)
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
             GameTooltip:SetText(spec.text, 1, 1, 1)
-            GameTooltip:AddLine(spec.tip(), nil, nil, nil, true)
+            GameTooltip:AddLine(editing and L["Edit layout: drag to move the Deck. Buttons work again after Done."]
+                or spec.tip(), nil, nil, nil, true)
             GameTooltip:Show()
+            Hovered(spec.key)
         end)
         b:SetScript("OnLeave", function()
             hl:SetAlpha(0)
             GameTooltip:Hide()
+            Hovered(nil)
         end)
         b:SetScript("OnClick", function(_, mouse)
+            -- In edit layout the Deck is something you move, not press.
+            if OA.Layout and OA.Layout.IsEditing() then
+                return
+            end
             spec.click(mouse)
             Paint()
         end)
@@ -404,6 +824,12 @@ local function Build()
         b:SetScript("OnDragStop", StopDrag)
         buttons[spec.key] = b
     end
+    liveGlow = Kit.Shape(buttons.live, "Glow", C.red, "BORDER")
+    liveGlow:SetSize(SIZE + 10, SIZE + 10)
+    liveGlow:SetPoint("CENTER")
+    liveGlow:SetBlendMode("ADD")
+    livePulse = Kit.Pulse(liveGlow, 0.15, 0.7, 0.9)
+    liveGlow:Hide()
     deck:SetScript("OnUpdate", Utils.Guard("deck", Watch))
     deck:SetScript("OnEvent", SyncScale)
     deck:RegisterEvent("UI_SCALE_CHANGED")

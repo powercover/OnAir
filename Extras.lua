@@ -1,6 +1,7 @@
 local _, OA = ...
 
--- What lives outside the console: the minimap button, the ON AIR badge and the go-live banner.
+-- What lives outside the console: the minimap button and the go-live banner. (The Deck shows
+-- you're on air; it replaced the old ON AIR badge.)
 OA.UI = OA.UI or {}
 
 local UI = OA.UI
@@ -137,56 +138,6 @@ local function BuildMinimap()
     PlaceMinimap()
 end
 
----------------------------------------------------------------------------------------------- badge
-
-local badge, badgePulse
-
-local function BuildBadge()
-    badge = CreateFrame("Button", "OnAirBadge", UIParent)
-    badge:SetSize(96, 26)
-    badge:SetFrameStrata("HIGH")
-    badge:SetClampedToScreen(true)
-    badge:SetMovable(true)
-    badge:RegisterForDrag("LeftButton")
-    local pos = OA.db.badgePos
-    if pos then
-        badge:SetPoint(pos.point, UIParent, pos.relPoint, pos.x, pos.y)
-    else
-        badge:SetPoint("TOP", 0, -24)
-    end
-    local bg = Kit.Rect(badge, { 0.05, 0.05, 0.06, 0.92 }, "BACKGROUND")
-    bg:SetAllPoints()
-    Kit.Border(badge, C.redDeep)
-    local glow = Kit.Shape(badge, "Glow", C.red, "BORDER")
-    glow:SetSize(42, 42)
-    glow:SetPoint("CENTER", badge, "LEFT", 15, 0)
-    glow:SetBlendMode("ADD")
-    badgePulse = Kit.Pulse(glow, 0.2, 1, 0.8)
-    local dot = Kit.Shape(badge, "Dot", C.red, "ARTWORK")
-    dot:SetSize(10, 10)
-    dot:SetPoint("CENTER", badge, "LEFT", 15, 0)
-    local text = Kit.Text(badge, 14, C.text)
-    text:SetPoint("LEFT", 28, 0)
-    text:SetText(L["ON AIR"])
-    badge:SetScript("OnDragStart", function(self)
-        self:StartMoving()
-        OA.Layout.DragStart("badge")
-    end)
-    badge:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        OA.Layout.Dropped("badge")
-    end)
-    badge:RegisterForClicks("AnyUp")
-    badge:SetScript("OnClick", function(_, button)
-        if button == "RightButton" then
-            UI.ToggleConsole()
-        else
-            OA.Toggle()
-        end
-    end)
-    badge:Hide()
-end
-
 ---------------------------------------------------------------------------------------------- banner
 
 local banner
@@ -196,13 +147,23 @@ local function BuildBanner()
     banner:SetSize(340, 54)
     banner:SetFrameStrata("FULLSCREEN_DIALOG")
     banner:SetPoint("TOP", 0, -90)
-    local bg = Kit.Rect(banner, { 0.05, 0.05, 0.06, 0.94 }, "BACKGROUND")
+    local bg = Kit.Rect(banner, { C.bg[1], C.bg[2], C.bg[3], 0.95 }, "BACKGROUND")
     bg:SetAllPoints()
     banner.edges = Kit.Border(banner, C.redDeep)
     banner.stripe = Kit.Rect(banner, C.red, "ARTWORK")
     banner.stripe:SetPoint("TOPLEFT")
     banner.stripe:SetPoint("BOTTOMLEFT")
     banner.stripe:SetWidth(3)
+    local look = Kit.Theme()
+    if look.stripes then
+        local band = Kit.Band(banner, "Stripes", C.text, "ARTWORK")
+        band:SetPoint("TOPLEFT")
+        band:SetPoint("TOPRIGHT")
+        band:SetHeight(5)
+    end
+    if look.corners then
+        Kit.Corners(banner, 10, 2, C.text, 0)
+    end
     banner.dot = Kit.Shape(banner, "Dot", C.red, "ARTWORK")
     banner.dot:SetSize(12, 12)
     banner.dot:SetPoint("LEFT", 22, 0)
@@ -217,6 +178,10 @@ local bannerTimer
 
 -- Slides in, waits, slides out.
 function UI.Toast(live)
+    -- Going live with the slate on: the slate says it already.
+    if live == true and OA.Moments.SlateShowing() then
+        return
+    end
     if not banner then
         BuildBanner()
     end
@@ -226,10 +191,10 @@ function UI.Toast(live)
     banner.dot:SetVertexColor(unpack(color))
     Kit.SetBorderColor(banner.edges, live and C.redDeep or C.line)
     if preview then
-        banner.title:SetText(L["PREVIEW"])
+        banner.title:SetText(Kit.Word("preview"))
         banner.sub:SetText(L["Masked like live. Nothing is recorded or marked."])
     else
-        banner.title:SetText(live and L["ON AIR"] or L["OFF AIR"])
+        banner.title:SetText(Kit.Word(live and "live" or "off"))
         banner.sub:SetText(live and L["Names are hidden. Have a good show."] or L["Real names are back."])
     end
     banner:Show()
@@ -269,15 +234,6 @@ function UI.UpdateExtras()
             miniPulse:Stop()
         end
     end
-    if badge then
-        local show = (OA.live and OA.db.badge) or OA.Layout.IsEditing()
-        badge:SetShown(show and true or false)
-        if show then
-            badgePulse:Play()
-        else
-            badgePulse:Stop()
-        end
-    end
     if OA.Deck and mini then
         OA.Deck.Refresh()
     end
@@ -285,21 +241,13 @@ end
 
 function UI.InitExtras()
     BuildMinimap()
-    BuildBadge()
-    OA.Layout.Register("badge", badge, L["ON AIR badge"], {
-        show = function() UI.UpdateExtras() end,
-        save = function()
-            local point, _, relPoint, x, y = badge:GetPoint()
-            OA.db.badgePos = { point = point, relPoint = relPoint, x = x, y = y }
-        end,
-    })
     OA.Layout.Register("stream", OA.StreamChat.Frame(), L["Stream chat"], {
         show = function(on) OA.StreamChat.SetPlacing(on) end,
         save = function() OA.StreamChat.SavePosition() end,
     })
     OA.Layout.Register("deck", OA.Deck.Frame(), L["Deck"], {
         show = function() OA.Deck.Refresh() end,
-        snap = function() end, -- the Deck snaps (edges, grid) and saves by itself
+        snap = function() end, -- the Deck docks to edges and saves by itself
     })
     UI.UpdateExtras()
     OA.Deck.Refresh()
