@@ -110,6 +110,11 @@ def shapes():
     ImageDraw.Draw(img).rounded_rectangle((4 * S, 2 * S, 12 * S, 6 * S), radius=S, fill=WHITE)
     img = img.resize((16, 8), Image.LANCZOS)
     img.save(os.path.join(MEDIA, "Sprocket.tga"))
+    # A dotted line (a camera menu's leaders and rules): one pixel on, three off.
+    img = Image.new("RGBA", (4, 2), (0, 0, 0, 0))
+    img.putpixel((0, 0), WHITE)
+    img.putpixel((0, 1), WHITE)
+    img.save(os.path.join(MEDIA, "Dots.tga"))
 
 
 # ---------------------------------------------------------------------------- glyph icons
