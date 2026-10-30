@@ -38,8 +38,8 @@ Kit.C = C
 -- flags for the touches other parts add (the go-live slate, the edit-layout grid, the banner).
 -- The skin itself (its console, controls and Deck) is in Skin<Name>.lua.
 Kit.THEMES = {
-    { key = "viewfinder", icon = "Camera", words = { live = "REC", preview = "PREVIEW", off = "STBY" },
-        corners = true, thirds = true, fillSelect = true, ticks = true,
+    { key = "viewfinder", words = { live = "REC", preview = "PREVIEW", off = "STBY" },
+        corners = true, thirds = true,
         palette = {
             bg = { 0.078, 0.082, 0.09, 0.98 }, rail = { 0.067, 0.071, 0.078, 1 },
             card = { 0.106, 0.11, 0.122, 1 }, raised = { 0.145, 0.149, 0.161, 1 },
@@ -48,10 +48,9 @@ Kit.THEMES = {
             faint = { 0.38, 0.37, 0.35, 1 }, off = { 0.3, 0.3, 0.3, 1 },
             accent = { 1, 0.69, 0.125, 1 }, accentInk = { 0.078, 0.082, 0.09, 1 },
             knob = { 0.078, 0.082, 0.09, 1 }, tally = { 0.31, 0.765, 0.969, 1 },
-        },
-        sections = { { 1, 0.231, 0.188, 1 }, { 1, 0.69, 0.125, 1 }, { 0.31, 0.765, 0.969, 1 }, { 0.482, 0.847, 0.561, 1 } } },
-    { key = "mixer", icon = "Group", words = { live = "PROGRAM", preview = "PREVIEW", off = "OFF AIR" },
-        keys = true, cap = true, tileTop = true,
+        } },
+    { key = "mixer", words = { live = "PROGRAM", preview = "PREVIEW", off = "OFF AIR" },
+        keys = true,
         palette = {
             bg = { 0.114, 0.122, 0.141, 0.98 }, rail = { 0.09, 0.098, 0.114, 1 },
             card = { 0.165, 0.173, 0.2, 1 }, raised = { 0.2, 0.208, 0.239, 1 },
@@ -61,8 +60,8 @@ Kit.THEMES = {
             accent = { 1, 0.231, 0.188, 1 }, tally = { 0.545, 0.886, 0.561, 1 },
             knob = { 0.79, 0.8, 0.83, 1 },
         } },
-    { key = "slate", icon = "Clapper", words = { live = "TAKE", preview = "REHEARSAL", off = "CUT" },
-        stripes = true, sprockets = true,
+    { key = "slate", words = { live = "TAKE", preview = "REHEARSAL", off = "CUT" },
+        stripes = true,
         palette = {
             bg = { 0.102, 0.102, 0.102, 0.98 }, rail = { 0.078, 0.078, 0.078, 1 },
             card = { 0.125, 0.125, 0.12, 1 }, raised = { 0.165, 0.16, 0.153, 1 },
@@ -72,7 +71,7 @@ Kit.THEMES = {
             accent = { 0.937, 0.914, 0.863, 1 }, accentInk = { 0.102, 0.102, 0.102, 1 },
             knob = { 0.102, 0.102, 0.102, 1 },
         } },
-    { key = "studio", icon = "Live", words = { live = "ON AIR", preview = "PREVIEW", off = "OFF AIR" },
+    { key = "studio", words = { live = "ON AIR", preview = "PREVIEW", off = "OFF AIR" },
         palette = {} },
 }
 

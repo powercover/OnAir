@@ -30,12 +30,18 @@
   (optionally) the game's own frames, lit as you go; sides onto the grid. Snapping Free, Guides or
   Grid, grid 16 / 32 / 64 px, Shift drags freely. Its own Layout page; opening and closing animate.
   Deck buttons are locked while editing.
-- Themes (console > Look): Viewfinder (default: corner brackets, thirds lines, REC / STBY, amber
-  camera-menu highlights, tick-scale sliders), Vision mixer (Program / Preview tally, lit keys, fader
-  caps), Film slate (clapper stripes, chalk lines, film-strip edges, TAKE / CUT) and Studio (the
-  plain console). The Deck, the stream chat, the banner, the go-live slate and edit layout follow
-  the theme: brackets lock focus, a wipe sweeps across, the clapper arm snaps shut. On a viewfinder
-  the thirds lines are snap guides too.
+- Skins (console > Look), each its own console, controls and Deck, switching right away (no reload):
+  - Viewfinder (default): a camera screen. REC readout and shot info on top, corner brackets and
+    thirds lines, the pages as a camera menu with colored tabs, every setting a menu row (ON / OFF,
+    < choice >, tick scales), a help line at the bottom, a Deck of words (REC UI CAM ORBIT ...).
+  - Vision mixer: PROGRAM / PREVIEW keys and a timecode display, the pages as a bus of keys, lit
+    tiles with a tally strip, vertical faders, small displays for text, a Deck of labeled keys.
+  - Film slate: clapper stripes, PRODUCTION / SCENE / TAKE cells, a numbered shot list, settings in
+    ruled chalk cells (the picked choice boxed), a film strip with the status as edge codes.
+  - Studio: the plain console with tiles and switches.
+  The banner, the go-live slate, the stream chat's title bar and edit layout follow the skin. On a
+  viewfinder the thirds lines are snap guides too.
+- OnAir Mono: OnAir's own pixel font for timecodes and camera text (Latin letters with accents).
 - Deck quick panels: rest the mouse on a button for a second for its settings on the fly: clock,
   preview and stream chat; camera mode, preset, zoom, field of view, shoulder; orbit direction, speed
   and auto-stop; recent moments and Mark now; snapping, lock and how the Deck hides.

@@ -22,6 +22,8 @@ Camera.lua
 UIKit.lua
 SkinStudio.lua
 SkinViewfinder.lua
+SkinMixer.lua
+SkinSlate.lua
 Console.lua
 Extras.lua
 StreamChat.lua

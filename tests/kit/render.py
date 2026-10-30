@@ -160,7 +160,7 @@ UIParent._w, UIParent._h = 1920, 1080
 WorldFrame._w, WorldFrame._h = 1920, 1080
 fire("ADDON_LOADED", "OnAir")
 fire("PLAYER_LOGIN")
-OA.db.deck.show = "always"
+OA.db.deck.show = "always"; OA.db.deck.hide = "never"
 if live then OA.GoLive() end
 OA.UI.SetSkin(skin)
 OA.UI.ShowConsole()
@@ -403,11 +403,13 @@ class Renderer:
         c = [tc[i] for i in range(1, 5)] if tc else [1, 0.82, 0, 1]
         box = self.to_px(r)
         width = box[2] - box[0]
-        lines = wrap(file, size, text, width) if (self.get(t, "_wrap") and self.get(t, "_wset")) else [text]
+        pts = self.get(t, "_pts")
+        stretched = pts is not None and any("LEFT" in p for p in pts.keys()) and any("RIGHT" in p for p in pts.keys())
+        lines = wrap(file, size, text, width) if (self.get(t, "_wrap") and (self.get(t, "_wset") or stretched)) else [text]
         line_h = size * 1.25
         total = line_h * len(lines)
         y = box[1] + ((box[3] - box[1]) - total) / 2
-        jh = self.get(t, "_jh") or "CENTER"
+        jh = self.get(t, "_jh") or ("LEFT" if self.get(t, "_kind") == "EditBox" else "CENTER")
         for line in lines:
             tw = int(font.getlength(line)) + 4
             th = int(line_h) + 4
