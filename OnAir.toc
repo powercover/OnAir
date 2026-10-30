@@ -1,0 +1,30 @@
+## Interface: 120100, 120105, 120107, 16001
+## Title: |cffffffffOn|r|cffff3b30Air|r
+## Notes: Streamer & recording mode. Swaps every player name in your UI for an alias you choose: chat, nameplates, frames, meters, friends, guild, group finder.
+## Author: powercover
+## Version: 0.1.0
+## X-License: All Rights Reserved
+## SavedVariables: OnAirDB
+## Category: Audio & Video
+## IconTexture: Interface\AddOns\OnAir\Media\Logo
+## AddonCompartmentFunc: OnAir_OnAddonCompartmentClick
+## AddonCompartmentFuncOnEnter: OnAir_OnAddonCompartmentEnter
+## AddonCompartmentFuncOnLeave: OnAir_OnAddonCompartmentLeave
+
+Locales\Locales.lua
+Utils.lua
+Cast.lua
+Names.lua
+Collect.lua
+Hide.lua
+Chat.lua
+Camera.lua
+UIKit.lua
+Console.lua
+Extras.lua
+StreamChat.lua
+Moments.lua
+Shield.lua
+Layout.lua
+Deck.lua
+Core.lua

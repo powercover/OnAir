@@ -1,0 +1,18 @@
+<Bindings>
+    <!-- No default keys: nothing is bound until the player picks keys in the game's Key Bindings. -->
+    <Binding name="ONAIR_TOGGLE" category="BINDING_HEADER_ONAIR">
+        OnAir_OnBinding("toggle")
+    </Binding>
+    <Binding name="ONAIR_UI" category="BINDING_HEADER_ONAIR">
+        OnAir_OnBinding("ui")
+    </Binding>
+    <Binding name="ONAIR_MARK" category="BINDING_HEADER_ONAIR">
+        OnAir_OnBinding("mark")
+    </Binding>
+    <Binding name="ONAIR_ORBIT" category="BINDING_HEADER_ONAIR">
+        OnAir_OnBinding("orbit")
+    </Binding>
+    <Binding name="ONAIR_CONSOLE" category="BINDING_HEADER_ONAIR">
+        OnAir_OnBinding("console")
+    </Binding>
+</Bindings>

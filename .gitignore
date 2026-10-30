@@ -1,0 +1,5 @@
+# test kit output
+tests/kit/suite_logs/
+__pycache__/
+# local notes
+CLAUDE.md
