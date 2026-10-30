@@ -19,6 +19,8 @@ function GetNormalizedRealmName() return "Kazzak" end
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
 C_Timer = { After = function(_, fn) fn() end }
 Constants = { CharacterNameSeparatorConsts = { CHARACTERNAME_SURNAME_SEPARATOR = " " } }
+ITEM_CREATED_BY = "|cff00ff00<Made by %s>|r"
+ITEM_WRITTEN_BY = "Written by %s"
 """
 
 DB = r"""
@@ -49,6 +51,9 @@ RETAIL = [
     (None, "Nimbus|cff416380#2468|r", "The Star|cff416380|r"),
     ('assert(OA.Names.RealOf("The Star\'s Crew 1") == "Bob-Kazzak")', "ok", "ok"),
     ('assert(OA.Names.RealOf("Steadicam") == "|Kp12|k")', "ok", "ok"),
+    (None, "<Made by N\u00f8probl\u00eam>", None),
+    (None, "|cff00ff00<Made by Crafty-Kazzak>|r", None),
+    (None, "Written by Penpal", None),
 ]
 
 FOREVER = [

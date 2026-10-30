@@ -453,6 +453,27 @@ for _, f in ipairs(FRAMES) do
   end
 end
 UI.HideConsole()
+
+-- snapping: center lines first, then grid lines, else a 4 px step
+UIParent._w, UIParent._h = 1920, 1080
+local piece = CreateFrame("Frame", nil, UIParent); piece._w, piece._h = 100, 20
+local function at(left, bottom) piece.GetLeft = function() return left end; piece.GetBottom = function() return bottom end end
+at(905, 300); local x1, _, gx1 = OA.Layout.SnapPosition(piece)
+at(294, 300); local x2, _, gx2 = OA.Layout.SnapPosition(piece)
+at(301, 300); local x3, _, gx3 = OA.Layout.SnapPosition(piece)
+SNAP_CENTER = (x1 == 910 and gx1 == 960)
+SNAP_GRID = (x2 == 288 and gx2 == 288)
+SNAP_FREE = (x3 == 300 and gx3 == nil)
+
+-- Done: pressed (down, then up) leaves edit layout cleanly and brings the console back
+UI.ShowConsole()
+OA.TogglePreview()
+OA.Layout.Start()
+local doneButton
+for _, c in ipairs(OnAirLayoutBar._children) do if c._kind == "Button" then doneButton = c end end
+doneButton:Click("LeftButton"); doneButton:Click("LeftButton")
+DONE_OK = (not OA.Layout.IsEditing()) and OnAirConsole:IsShown() and not OnAirLayoutBar:IsShown()
+OA.EndLive()
 """
 
 
@@ -486,7 +507,8 @@ def run(toc):
                               "MOMENTS", "CHAPTERS", "MARKERS", "SHIELD_HELD", "SHIELD_FRIEND", "SHIELD_DECLINED",
                               "SHIELD_REPLY", "ZONE_TEXT", "HELD_BEFORE_END", "HELD_AFTER_END", "PREVIEW_TEXT",
                               "NPC_GENERIC", "NPC_AFTER_RESET", "NPC_BOSS", "NPC_HIDDEN_ALPHA", "NPC_CVAR",
-                              "DECK_UI_HIDDEN", "DECK_STAYS", "LAYOUT_ON")}
+                              "DECK_UI_HIDDEN", "DECK_STAYS", "LAYOUT_ON", "SNAP_CENTER", "SNAP_GRID",
+                              "SNAP_FREE", "DONE_OK")}
 
 
 if __name__ == "__main__":
@@ -523,6 +545,10 @@ if __name__ == "__main__":
                     (results["NPC_HIDDEN_ALPHA"] == 0 and results["NPC_CVAR"] == "0", "NPC names hidden (plates and overhead)"),
                     (results["DECK_UI_HIDDEN"] and results["DECK_STAYS"], "Deck stays with the UI hidden"),
                     (results["LAYOUT_ON"], "edit layout runs"),
+                    (results["SNAP_CENTER"], "snaps to the center line"),
+                    (results["SNAP_GRID"], "snaps an edge to a grid line"),
+                    (results["SNAP_FREE"], "off the lines: 4 px steps"),
+                    (results["DONE_OK"], "Done leaves edit layout (also during a preview)"),
                 ]
                 for ok, what in checks:
                     print(f"  {'ok  ' if ok else 'FAIL'} {what}")

@@ -225,6 +225,11 @@ end
 -- After a drag: stick to an edge or a corner when close, else stay where dropped.
 local function Snap()
     local db = DB()
+    -- In edit layout, the grid and the center lines count too (along the docked edge).
+    local gridX, gridY
+    if OA.Layout and OA.Layout.IsEditing() then
+        gridX, gridY = OA.Layout.SnapPosition(deck)
+    end
     local sw, sh = Screen()
     local w, h = deck:GetWidth(), deck:GetHeight()
     local left, bottom = deck:GetLeft() or 0, deck:GetBottom() or 0
@@ -244,8 +249,8 @@ local function Snap()
         Layout()
         w, h = deck:GetWidth(), deck:GetHeight()
     end
-    local x = math.max(0, math.min(left, sw - w))
-    local y = math.max(0, math.min(bottom, sh - h))
+    local x = math.max(0, math.min(gridX or left, sw - w))
+    local y = math.max(0, math.min(gridY or bottom, sh - h))
     if nearX then
         x = dLeft <= dRight and 0 or sw - w
     end
@@ -353,10 +358,12 @@ local function Build()
             return
         end
         deck:StartMoving()
+        OA.Layout.DragStart("deck")
     end
     local function StopDrag()
         deck:StopMovingOrSizing()
         Snap()
+        OA.Layout.Dropped("deck")
     end
     deck:SetScript("OnDragStart", StartDrag)
     deck:SetScript("OnDragStop", StopDrag)

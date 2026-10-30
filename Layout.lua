@@ -12,11 +12,14 @@ local L = OA.L
 local Utils = OA.Utils
 
 local GRID = 32
-local SNAP = 8
+local RANGE = 12     -- how close (in UI pixels) a center or an edge is pulled onto a line
+local STEP = 4       -- off the lines, positions round to this
 
 local editing = false
 local movers = {}
 local grid, bar
+local guideX, guideY
+local dragging
 local consoleWasOpen = false
 
 function Layout.IsEditing()
@@ -61,6 +64,13 @@ local function BuildGrid()
     end
     Line(true, 0, C.red, 0.45)
     Line(false, 0, C.red, 0.45)
+    -- The guides that light up where a dragged piece will snap.
+    guideX = grid:CreateTexture(nil, "OVERLAY")
+    guideX:SetWidth(2)
+    guideX:Hide()
+    guideY = grid:CreateTexture(nil, "OVERLAY")
+    guideY:SetHeight(2)
+    guideY:Hide()
     grid:Hide()
 end
 
@@ -79,8 +89,9 @@ local function BuildBar()
     text:SetPoint("LEFT", 30, 0)
     text:SetText(L["EDIT LAYOUT  -  drag things to move them"])
     local done = Kit.Button(bar, L["Done"], 80, 26, "primary", function()
-        Layout.Stop()
+        Layout.Stop(true)
     end)
+    done:RegisterForClicks("LeftButtonDown", "LeftButtonUp")
     done:SetPoint("RIGHT", -8, 0)
     tinsert(UISpecialFrames, "OnAirLayoutBar")
     bar:SetScript("OnHide", function()
@@ -114,19 +125,85 @@ local function Outline(mover)
     return o
 end
 
--- Round a frame's spot onto the grid (in UIParent's coordinates).
-local function GridSnap(frame)
-    local left, bottom = frame:GetLeft(), frame:GetBottom()
-    if not left then
-        return
+-- Where a frame would snap: its center onto the screen's center lines, or an edge onto a grid
+-- line, whichever is closest within RANGE; otherwise rounded to STEP. Returns left and bottom in
+-- the frame's own units (ready for SetPoint), and the lines it snapped to (UI units, or nil).
+local function Axis(start, size, center)
+    local best, guide, dist = math.floor(start / STEP + 0.5) * STEP, nil, RANGE
+    local mid = start + size / 2
+    if math.abs(mid - center) < dist then
+        best, guide, dist = center - size / 2, center, math.abs(mid - center)
     end
-    local scale = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
-    local x = math.floor(left * scale / SNAP + 0.5) * SNAP
-    local y = math.floor(bottom * scale / SNAP + 0.5) * SNAP
-    frame:ClearAllPoints()
-    frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x / scale, y / scale)
+    for _, edge in ipairs({ start, start + size }) do
+        local line = center + math.floor((edge - center) / GRID + 0.5) * GRID
+        local d = math.abs(edge - line)
+        if d < dist then
+            best, guide, dist = line - (edge - start), line, d
+        end
+    end
+    return best, guide
+end
+
+function Layout.SnapPosition(frame)
+    local left, bottom = frame:GetLeft(), frame:GetBottom()
+    if not left or not bottom then
+        return nil
+    end
+    local k = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    local w, h = frame:GetWidth() * k, frame:GetHeight() * k
+    local x, gx = Axis(left * k, w, UIParent:GetWidth() / 2)
+    local y, gy = Axis(bottom * k, h, UIParent:GetHeight() / 2)
+    return x / k, y / k, gx, gy
+end
+
+local function GridSnap(frame)
+    local x, y = Layout.SnapPosition(frame)
+    if x then
+        frame:ClearAllPoints()
+        frame:SetPoint("BOTTOMLEFT", frame:GetParent() or UIParent, "BOTTOMLEFT", x, y)
+    end
 end
 Layout.GridSnap = GridSnap
+
+-- While something is dragged: light the lines it would snap to.
+local function ShowGuides()
+    if not dragging then
+        guideX:Hide()
+        guideY:Hide()
+        return
+    end
+    local _, _, gx, gy = Layout.SnapPosition(dragging)
+    local cx, cy = UIParent:GetWidth() / 2, UIParent:GetHeight() / 2
+    if gx then
+        local center = math.abs(gx - cx) < 0.5
+        guideX:SetColorTexture(center and C.red[1] or 1, center and C.red[2] or 1, center and C.red[3] or 1, center and 1 or 0.55)
+        guideX:ClearAllPoints()
+        guideX:SetPoint("TOP", grid, "TOPLEFT", gx, 0)
+        guideX:SetPoint("BOTTOM", grid, "BOTTOMLEFT", gx, 0)
+        guideX:Show()
+    else
+        guideX:Hide()
+    end
+    if gy then
+        local center = math.abs(gy - cy) < 0.5
+        guideY:SetColorTexture(center and C.red[1] or 1, center and C.red[2] or 1, center and C.red[3] or 1, center and 1 or 0.55)
+        guideY:ClearAllPoints()
+        guideY:SetPoint("LEFT", grid, "BOTTOMLEFT", 0, gy)
+        guideY:SetPoint("RIGHT", grid, "BOTTOMRIGHT", 0, gy)
+        guideY:Show()
+    else
+        guideY:Hide()
+    end
+end
+
+-- A piece's drag began (pieces call this from their OnDragStart).
+function Layout.DragStart(key)
+    local mover = movers[key]
+    if editing and mover then
+        dragging = mover.frame
+        grid:SetScript("OnUpdate", Utils.Guard("layout guides", ShowGuides))
+    end
+end
 
 function Layout.Start()
     if editing or InCombatLockdown() then
@@ -160,26 +237,36 @@ function Layout.Start()
     end
 end
 
-function Layout.Stop()
-    if not editing then
+-- Leaves edit layout. Each step runs on its own, so one piece failing can't keep the grid on
+-- screen (the failure is reported once). `force` cleans up even when we think we're not editing.
+function Layout.Stop(force)
+    if not editing and not force then
         return
     end
+    local was = editing
     editing = false
-    grid:Hide()
-    bar:Hide()
-    for _, mover in pairs(movers) do
+    dragging = nil
+    if grid then
+        grid:SetScript("OnUpdate", nil)
+        grid:Hide()
+    end
+    if bar and bar:IsShown() then
+        bar:Hide()
+    end
+    for key, mover in pairs(movers) do
         if mover.outline then
             mover.outline:Hide()
         end
         if mover.opts.show then
-            mover.opts.show(false)
+            Utils.Guard("layout " .. key, mover.opts.show)(false)
         end
     end
-    if consoleWasOpen and OA.UI then
-        OA.UI.ShowConsole()
+    if was and consoleWasOpen and OA.UI then
+        consoleWasOpen = false
+        Utils.Guard("layout console", OA.UI.ShowConsole)()
     end
     if OA.UI and OA.UI.Refresh then
-        OA.UI.Refresh()
+        Utils.Guard("layout refresh", OA.UI.Refresh)()
     end
 end
 
@@ -194,6 +281,13 @@ end
 -- Called by a piece when a drag ends: snap it (its own way or to the grid), then save.
 function Layout.Dropped(key)
     local mover = movers[key]
+    if mover and dragging == mover.frame then
+        dragging = nil
+        if grid then
+            grid:SetScript("OnUpdate", nil)
+            ShowGuides()
+        end
+    end
     if not mover then
         return
     end

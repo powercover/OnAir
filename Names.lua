@@ -606,7 +606,45 @@ local function SkipEscape(s, a, len)
     return a + 2
 end
 
+-- Lines that carry a stranger's name OnAir may never have seen: the crafter of an item
+-- ("<Made by %s>"), a gift's sender, a letter's writer. Built from the game's own text (so every
+-- language works), without color codes; the name in them is learned on the spot.
+local creatorPatterns
+local CREATOR_FORMATS = { "ITEM_CREATED_BY", "ITEM_WRAPPED_BY", "ITEM_WRITTEN_BY", "ITEM_SIGNED_BY" }
+
+local function CreatorPatterns()
+    if creatorPatterns then
+        return creatorPatterns
+    end
+    creatorPatterns = {}
+    for _, global in ipairs(CREATOR_FORMATS) do
+        local format = _G[global]
+        if type(format) == "string" and format:find("%%s") then
+            format = format:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+            local pattern = format:gsub("[%(%)%.%+%-%*%?%[%]%^%$]", "%%%0"):gsub("%%s", "(.-)")
+            if pattern:sub(-4) == "(.-)" then
+                pattern = pattern:sub(1, -5) .. "(.+)$"
+            end
+            creatorPatterns[#creatorPatterns + 1] = pattern
+        end
+    end
+    return creatorPatterns
+end
+
+local function LearnCreators(s)
+    for _, pattern in ipairs(CreatorPatterns()) do
+        local name = s:match(pattern)
+        if name then
+            name = name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+            if IsPlain(name) and #name > 1 and not used[name] then
+                Names.AddFull(name, "other")
+            end
+        end
+    end
+end
+
 local function ScrubRaw(s)
+    LearnCreators(s)
     local held = {}
     if #phrases > 0 then
         s = ReplacePhrases(s, held)
