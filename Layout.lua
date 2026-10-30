@@ -37,6 +37,9 @@ local centerX, centerY
 local guideX, guideY
 local drag                 -- the piece being dragged: frame and where the drag began
 local consoleWasOpen = false
+local stale = false        -- the skin changed since the grid was built
+
+Kit.OnSkin(function() stale = true end)
 
 local function Options()
     local db = OA.db
@@ -575,6 +578,21 @@ function Layout.Start()
         end
         return
     end
+    -- A new skin since the last time: the grid, the bar and the outlines are drawn again.
+    if grid and stale then
+        grid:Hide()
+        bar:SetScript("OnHide", nil)
+        bar:Hide()
+        grid, bar, shade = nil, nil, nil
+        lines = { count = 0 }
+        for _, mover in pairs(movers) do
+            if mover.outline then
+                mover.outline:Hide()
+                mover.outline = nil
+            end
+        end
+    end
+    stale = false
     -- Build first: the new bar hides itself at the end, and its OnHide (Esc) would end an edit
     -- layout that had already begun.
     if not grid then

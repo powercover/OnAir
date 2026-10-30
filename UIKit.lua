@@ -1,9 +1,10 @@
 local _, OA = ...
 
--- The look: flat shapes, thin lines, the game's Arial Narrow for a tight studio-label feel.
--- Every widget is built from color textures and the white shapes in Media/ (tinted), so there are
--- no Blizzard templates to fight. Themes (below) recolor it all and add their own touches: a
--- camera viewfinder (the default), a vision mixer, a film slate, or the plain studio console.
+-- The building blocks: colors, fonts, shapes, tweens and the studio's widgets. Flat shapes, thin
+-- lines, the game's Arial Narrow; every widget is built from color textures and the white shapes in
+-- Media/ (tinted), so there are no Blizzard templates to fight. The skins (Skin*.lua) build their
+-- own consoles and controls from these: a camera viewfinder (the default), a vision mixer, a film
+-- slate, or the plain studio console.
 OA.Kit = {}
 
 local Kit = OA.Kit
@@ -33,8 +34,9 @@ Kit.C = C
 
 ---------------------------------------------------------------------------------------------- themes
 
--- Each theme: a palette (any key of C), the words for live / preview / off the air, and flags
--- for its touches. Applied once at login (before anything is built); switching reloads the UI.
+-- Each skin's colors: a palette (any key of C), the words for live / preview / off the air, and
+-- flags for the touches other parts add (the go-live slate, the edit-layout grid, the banner).
+-- The skin itself (its console, controls and Deck) is in Skin<Name>.lua.
 Kit.THEMES = {
     { key = "viewfinder", icon = "Camera", words = { live = "REC", preview = "PREVIEW", off = "STBY" },
         corners = true, thirds = true, fillSelect = true, ticks = true,
@@ -107,6 +109,30 @@ function Kit.ApplyTheme(key)
     end
 end
 
+---------------------------------------------------------------------------------------------- skins
+
+-- Skin<Name>.lua files add themselves here: Kit.SKINS[key] = { Shell = ..., Toggle = ..., ... }.
+Kit.SKINS = {}
+
+-- The active skin (the studio one fills in anything a skin leaves out).
+function Kit.Skin()
+    return Kit.SKINS[theme.key] or Kit.SKINS.studio
+end
+
+-- Parts that drew themselves in the old skin's colors redo it when the skin changes.
+local skinListeners = {}
+
+function Kit.OnSkin(fn)
+    skinListeners[#skinListeners + 1] = fn
+end
+
+function Kit.SetSkin(key)
+    Kit.ApplyTheme(key)
+    for i, fn in ipairs(skinListeners) do
+        Utils.Guard("skin " .. i, fn)(key)
+    end
+end
+
 -- "live", "preview" or "off" in the theme's words (REC / PREVIEW / STBY on a viewfinder).
 function Kit.Word(state)
     return OA.L[theme.words[state] or ""]
@@ -163,21 +189,33 @@ local LATIN = { enUS = true, enGB = true, deDE = true, frFR = true, esES = true,
 local FONT = LATIN[GetLocale()] and "Fonts\\ARIALN.TTF" or STANDARD_TEXT_FONT
 Kit.FONT = FONT
 
+-- OnAir Mono: OnAir's own pixel font (made by tests/kit/make_font.py: Latin letters, digits,
+-- the marks a readout needs) for timecodes and camera-screen text. Other alphabets keep theirs.
+local MONO = LATIN[GetLocale()] and Utils.MEDIA .. "OnAirMono.ttf" or STANDARD_TEXT_FONT
+
 local fonts = {}
-function Kit.Font(size, flags)
-    local key = size .. (flags or "")
+local function MakeFont(file, tag, size, flags)
+    local key = tag .. size .. (flags or "")
     if not fonts[key] then
         local font = CreateFont("OnAirFont" .. key:gsub("%W", ""))
-        font:SetFont(FONT, size, flags or "")
+        font:SetFont(file, size, flags or "")
         font:SetShadowOffset(0, 0)
         fonts[key] = font
     end
     return fonts[key]
 end
 
-function Kit.Text(parent, size, color, layer)
+function Kit.Font(size, flags)
+    return MakeFont(FONT, "", size, flags)
+end
+
+function Kit.Mono(size, flags)
+    return MakeFont(MONO, "Mono", size, flags)
+end
+
+function Kit.Text(parent, size, color, layer, mono)
     local fs = parent:CreateFontString(nil, layer or "OVERLAY")
-    fs:SetFontObject(Kit.Font(size))
+    fs:SetFontObject(mono and Kit.Mono(size) or Kit.Font(size))
     fs:SetTextColor(unpack(color or C.text))
     fs:SetJustifyH("LEFT")
     fs:SetWordWrap(false)
@@ -369,6 +407,9 @@ function Kit.Button(parent, text, width, height, kind, onClick)
         self.base, self.hot = newBase, newHot
         bg:SetColorTexture(unpack(newBase))
     end
+    function b:SetLabel(text)
+        label:SetText(text)
+    end
     return b
 end
 
@@ -414,7 +455,6 @@ function Kit.Switch(parent, get, set)
     local key = {}
     local function Paint(p)
         local r, g, b, a = Mix(C.off, C.accent, p)
-        knob:SetVertexColor(Mix({ 1, 1, 1, 1 }, C.knob, p))
         left:SetVertexColor(r, g, b, a)
         right:SetVertexColor(r, g, b, a)
         mid:SetColorTexture(r, g, b, a)
@@ -448,14 +488,11 @@ function Kit.Segmented(parent, options, width, get, set)
     bg:SetAllPoints()
     Kit.Border(bar)
     local segW = width / #options
-    -- A viewfinder fills the picked one (like a camera menu); the others underline it.
-    local fill = theme.fillSelect
-    local pill = Kit.Rect(bar, fill and C.accent or C.raised, "BORDER")
+    local pill = Kit.Rect(bar, C.raised, "BORDER")
     pill:SetSize(segW - 4, h - 4)
     local underline = Kit.Rect(bar, C.accent, "ARTWORK")
     underline:SetSize(segW - 4, 2)
     underline:SetPoint("BOTTOMLEFT", pill, "BOTTOMLEFT")
-    underline:SetShown(not fill)
     local buttons = {}
     local key = {}
     local x = 0
@@ -481,7 +518,7 @@ function Kit.Segmented(parent, options, width, get, set)
             Place(target)
         end
         for i, b in ipairs(buttons) do
-            b.label:SetTextColor(unpack(i == index and (fill and C.accentInk or C.text) or C.muted))
+            b.label:SetTextColor(unpack(i == index and C.text or C.muted))
         end
     end
     for i, option in ipairs(options) do
@@ -584,22 +621,8 @@ function Kit.Slider(parent, width, label, min, max, step, get, set, format)
     local fill = Kit.Rect(track, C.accent, "BORDER")
     fill:SetPoint("LEFT")
     fill:SetHeight(3)
-    -- Knob: a dot, or a fader cap on a vision mixer. A viewfinder adds a tick scale.
-    local knob
-    if theme.cap then
-        knob = Kit.Rect(track, C.knob, "ARTWORK")
-        knob:SetSize(8, 16)
-    else
-        knob = Kit.Shape(track, "Dot", theme.fillSelect and C.accent or { 1, 1, 1, 1 }, "ARTWORK")
-        knob:SetSize(12, 12)
-    end
-    if theme.ticks then
-        for i = 0, 10 do
-            local tick = Kit.Rect(track, C.faint, "BACKGROUND")
-            tick:SetSize(1, i % 5 == 0 and 7 or 4)
-            tick:SetPoint("BOTTOM", track, "BOTTOMLEFT", width * i / 10, 9)
-        end
-    end
+    local knob = Kit.Shape(track, "Dot", { 1, 1, 1, 1 }, "ARTWORK")
+    knob:SetSize(12, 12)
     local enabled = true
 
     local function Snap(v)

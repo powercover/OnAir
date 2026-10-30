@@ -161,7 +161,16 @@ local function BuildSlate()
     slate:Hide()
 end
 
+-- A new skin plays the slate its way: built again the next time it's needed.
+local slateStale = false
+Kit.OnSkin(function() slateStale = true end)
+
 local function Slate()
+    if slate and slateStale then
+        slate:Hide()
+        slate = nil
+    end
+    slateStale = false
     if not slate then
         BuildSlate()
     end

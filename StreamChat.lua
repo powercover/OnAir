@@ -149,29 +149,8 @@ function Stream.ApplyLook()
     smf:SetPoint("TOPLEFT", 10, db.header ~= false and -28 or -8)
 end
 
-local function Build()
-    window = CreateFrame("Frame", "OnAirStreamChat", UIParent)
-    -- High in the chat's own layer, so it covers chat windows (Blizzard's and addons').
-    window:SetFrameStrata("MEDIUM")
-    window:SetFrameLevel(120)
-    window:SetClampedToScreen(true)
-    window:SetMovable(true)
-    window:SetResizable(true)
-    if window.SetResizeBounds then
-        window:SetResizeBounds(240, 100, 1200, 800)
-    end
-    local pos = DB().pos
-    if pos and pos.point then
-        window:SetPoint(pos.point, UIParent, pos.relPoint, pos.x, pos.y)
-        window:SetSize(pos.w or 430, pos.h or 200)
-    else
-        DefaultPlace()
-    end
-    window.bg = Kit.Rect(window, C.bg, "BACKGROUND")
-    window.bg:SetAllPoints()
-    Kit.Border(window, C.line)
-    window:EnableMouse(true)
-
+-- The title bar: the skin's mark, a live dot and the title; drag it to move the window.
+local function BuildHeader()
     header = CreateFrame("Frame", nil, window)
     header:SetPoint("TOPLEFT")
     header:SetPoint("TOPRIGHT")
@@ -188,6 +167,7 @@ local function Build()
         over:SetAllPoints()
         over:SetFrameLevel(window:GetFrameLevel() + 20)
         Kit.Corners(over, 10, 2, { C.text[1], C.text[2], C.text[3], 0.7 }, 3)
+        header.over = over
     end
     local glow = Kit.Shape(header, "Glow", C.red, "BORDER")
     glow:SetSize(30, 30)
@@ -213,6 +193,46 @@ local function Build()
         window:StopMovingOrSizing()
         OA.Layout.Dropped("stream")
     end)
+end
+
+-- A new skin: the title bar is drawn again, the border recolored. The lines stay.
+Kit.OnSkin(function()
+    if not window then
+        return
+    end
+    header:Hide()
+    if header.over then
+        header.over:Hide()
+    end
+    BuildHeader()
+    Kit.SetBorderColor(window.edges, C.line)
+    Stream.ApplyLook()
+    Stream.Update()
+end)
+
+local function Build()
+    window = CreateFrame("Frame", "OnAirStreamChat", UIParent)
+    -- High in the chat's own layer, so it covers chat windows (Blizzard's and addons').
+    window:SetFrameStrata("MEDIUM")
+    window:SetFrameLevel(120)
+    window:SetClampedToScreen(true)
+    window:SetMovable(true)
+    window:SetResizable(true)
+    if window.SetResizeBounds then
+        window:SetResizeBounds(240, 100, 1200, 800)
+    end
+    local pos = DB().pos
+    if pos and pos.point then
+        window:SetPoint(pos.point, UIParent, pos.relPoint, pos.x, pos.y)
+        window:SetSize(pos.w or 430, pos.h or 200)
+    else
+        DefaultPlace()
+    end
+    window.bg = Kit.Rect(window, C.bg, "BACKGROUND")
+    window.bg:SetAllPoints()
+    window.edges = Kit.Border(window, C.line)
+    window:EnableMouse(true)
+    BuildHeader()
 
     smf = CreateFrame("ScrollingMessageFrame", nil, window)
     smf:SetPoint("BOTTOMRIGHT", -10, 8)

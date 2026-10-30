@@ -20,6 +20,7 @@ Hide.lua
 Chat.lua
 Camera.lua
 UIKit.lua
+SkinStudio.lua
 Console.lua
 Extras.lua
 StreamChat.lua

@@ -303,7 +303,22 @@ local function walk(o, seen)
   end
   for _, c in ipairs(o._children or {}) do walk(c, seen) end
 end
-walk(OnAirConsole, {})
+-- The Look page's cards switch the skin: after a walk, back to the one under test.
+local function walkConsole()
+  walk(OnAirConsole, {})
+  UI.SetSkin(LOOK)
+end
+-- The Deck's buttons, in the face on screen.
+function DeckButtons()
+  local list = {}
+  for _, f in ipairs(OnAirDeck._children) do
+    if f._shown then
+      for _, c in ipairs(f._children) do if c._kind == "Button" then list[#list + 1] = c end end
+    end
+  end
+  return list
+end
+walkConsole()
 walk(OnAirMinimapButton, {})
 -- the walk typed into every field and clicked every choice: back to known settings
 OA.db.npc = { mode = "real", enemy = "Enemy", friendly = "NPC", boss = "Boss" }
@@ -367,7 +382,7 @@ OA.GoLive(); assert(C_CVar.GetCVar("cameraFov") == "60", "live mode, live: appli
 OA.EndLive(); assert(C_CVar.GetCVar("cameraFov") == "90", "broadcast over: restored")
 assert(C_CVar.GetCVar("cameraDistanceMaxZoomFactor") == "1.9", "zoom restored")
 assert(OA.db.camera.saved == nil, "nothing left saved")
-UI.ShowPage("camera", true); walk(OnAirConsole, {})
+UI.ShowPage("camera", true); walkConsole()
 
 -- stream chat: only the picked kinds of lines, names aliased
 OA.GoLive()
@@ -380,7 +395,7 @@ fire("CHAT_MSG_PARTY", "secret plan", "Bob-Kazzak", "", "", "", "", 0, 0, "", 0,
 STREAM_LINES = table.concat(smf._lines, " || ")
 OA.EndLive()
 assert(not OnAirStreamChat:IsShown(), "stream chat hidden after the broadcast")
-UI.ShowPage("stream", true); walk(OnAirConsole, {})
+UI.ShowPage("stream", true); walkConsole()
 
 -- moments: a session at 00:00, automatic markers, a manual one, exports
 OA.db.moments.screenshot = true
@@ -403,7 +418,7 @@ MOMENTS = table.concat(kinds, " | ")
 CHAPTERS = OA.Moments.Chapters(session)
 MARKERS = OA.Moments.MarkerList(session)
 assert(SHOTS > 0, "screenshots taken")
-UI.ShowPage("moments", true); walk(OnAirConsole, {})
+UI.ShowPage("moments", true); walkConsole()
 
 -- shield: a stranger's whisper is held, a friend's goes through; invites declined; zones hidden
 OA.db.shield.reply = true
@@ -422,7 +437,7 @@ ZONE_TEXT = zfs:GetText()
 HELD_BEFORE_END = OA.Shield.HeldCount()
 OA.EndLive()
 HELD_AFTER_END = OA.Shield.HeldCount()
-UI.ShowPage("shield", true); walk(OnAirConsole, {})
+UI.ShowPage("shield", true); walkConsole()
 
 -- preview: masked like live, but no session, no Shield
 local before = OA.Moments.Current()
@@ -465,8 +480,8 @@ DECK_STAYS = OnAirDeck:IsShown() and OnAirDeck:GetParent() == WorldFrame
 OA.Deck.ToggleUI()
 OA.Layout.Start(); LAYOUT_ON = OA.Layout.IsEditing(); walk(OnAirLayoutBar, {}); OA.Layout.Stop()
 OA.Deck.AfterDrag()
-UI.ShowPage("deck", true); walk(OnAirConsole, {})
-UI.ShowPage("names", true); walk(OnAirConsole, {})
+UI.ShowPage("deck", true); walkConsole()
+UI.ShowPage("names", true); walkConsole()
 
 -- slider keys
 for _, f in ipairs(FRAMES) do
@@ -531,7 +546,7 @@ GetCursorPosition = function() return 757, 400 end
 run(0.1)
 local dragged = placed and placed[1] == "BOTTOMLEFT" and placed[2] == 860
 local orbitBefore = OA.Camera.IsOrbiting()
-for _, c in ipairs(deck._children) do
+for _, c in ipairs(DeckButtons()) do
   if c._kind == "Button" and c._scripts and c._scripts.OnClick then c._scripts.OnClick(c, "LeftButton") end
 end
 local locked = OA.Camera.IsOrbiting() == orbitBefore and OA.Layout.IsEditing()
@@ -542,7 +557,7 @@ LIVE_DRAG = dragged and locked
 
 -- hover a Deck button a second: its quick panel opens; every control in it works
 local opened = 0
-for _, c in ipairs(deck._children) do
+for _, c in ipairs(DeckButtons()) do
   if c._kind == "Button" and c._scripts and c._scripts.OnEnter then
     c._scripts.OnEnter(c); run(1.1)
     if OnAirDeckPanel and OnAirDeckPanel:IsShown() then
@@ -588,13 +603,33 @@ OA.Camera.StartOrbit("right"); run(0.5); fire("PLAYER_STARTED_MOVING"); local m4
 OA.Camera.StopOrbit(); OA.db.camera.orbitStop.move = true
 ORBIT_STOPS = m1 and m2 and m3 and m4
 OA.EndLive()
+
+-- skins switch live: every skin's console, Deck and quick panels work, then back
+local built = 0
+UI.ShowConsole()
+for _, t in ipairs(OA.Kit.THEMES) do
+  UI.SetSkin(t.key)
+  if OA.Kit.Theme().key == t.key then built = built + 1 end
+  for _, key in ipairs({ "broadcast", "camera", "deck", "look" }) do UI.ShowPage(key, true) end
+  walk(OnAirConsole, {}); UI.SetSkin(t.key)
+  OA.GoLive(); UI.Refresh(); OA.EndLive()
+  OA.Deck.Refresh(); walk(OnAirDeck, {})
+  for _, c in ipairs(DeckButtons()) do
+    c._scripts.OnEnter(c); run(1.1)
+    if OnAirDeckPanel and OnAirDeckPanel:IsShown() then walk(OnAirDeckPanel, {}) end
+    c._scripts.OnLeave(c); run(0.6)
+  end
+  OA.Camera.StopOrbit()
+end
+UI.SetSkin(LOOK)
+SKIN_SWITCH = built == #OA.Kit.THEMES and OA.Kit.Theme().key == LOOK and #DeckButtons() == #OA.Deck.BUTTONS
 """
 
 
 def run(toc, look="viewfinder"):
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(MOCK, toc)
-    lua.execute('OnAirDB = { look = "%s" }' % look)
+    lua.execute('OnAirDB = { look = "%s" }; LOOK = "%s"' % (look, look))
     # Track every frame so events can be fired at the ones that registered them.
     lua.execute(r"""
     FRAMES = {}
@@ -628,7 +663,7 @@ def run(toc, look="viewfinder"):
                               "SNAP_FREE", "DONE_OK", "SNAP_RIGHT_CENTER", "SNAP_PIECE",
                               "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS",
                               "SNAP_MODES", "LIVE_DRAG", "FIRST_EDIT", "PANELS_OPENED",
-                              "PANEL_CLOSES", "LOCK_OK")}
+                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH")}
 
 
 if __name__ == "__main__":
@@ -682,6 +717,7 @@ if __name__ == "__main__":
                     (results["LOCK_OK"], "Lock positions stops dragging"),
                     (results["SNAP_MODES"], "snapping modes: Guides skips the grid, Free skips all"),
                     (results["LIVE_DRAG"], "Deck sticks to a guide while dragged; its buttons are locked"),
+                    (results["SKIN_SWITCH"], "skins switch live: console, Deck and panels in each"),
                 ]
                 for ok, what in checks:
                     print(f"  {'ok  ' if ok else 'FAIL'} {what}")

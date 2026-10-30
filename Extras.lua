@@ -177,11 +177,20 @@ end
 local bannerTimer
 
 -- Slides in, waits, slides out.
+-- A new skin draws a new banner the next time one shows.
+local bannerStale = false
+Kit.OnSkin(function() bannerStale = true end)
+
 function UI.Toast(live)
     -- Going live with the slate on: the slate says it already.
     if live == true and OA.Moments.SlateShowing() then
         return
     end
+    if banner and bannerStale then
+        banner:Hide()
+        banner = nil
+    end
+    bannerStale = false
     if not banner then
         BuildBanner()
     end

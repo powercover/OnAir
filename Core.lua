@@ -125,19 +125,6 @@ function OA.GoLive()
     end
 end
 
-StaticPopupDialogs["ONAIR_LOOK"] = {
-    text = L["Switch the look to %s? The interface reloads to repaint everything."],
-    button1 = L["Reload now"],
-    button2 = L["Later"],
-    OnAccept = function()
-        ReloadUI()
-    end,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
-
 StaticPopupDialogs["ONAIR_RELOAD"] = {
     text = L["Off the air. Real names come back in new text right away; a reload brings them back everywhere."],
     button1 = L["Reload now"],
