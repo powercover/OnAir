@@ -197,7 +197,10 @@ local function MakeFont(file, tag, size, flags)
     local key = tag .. size .. (flags or "")
     if not fonts[key] then
         local font = CreateFont("OnAirFont" .. key:gsub("%W", ""))
-        font:SetFont(file, size, flags or "")
+        -- If the game won't take a font file, the standard font stands in (never blank text).
+        if font:SetFont(file, size, flags or "") == false then
+            font:SetFont(FONT, size, flags or "")
+        end
         font:SetShadowOffset(0, 0)
         fonts[key] = font
     end
