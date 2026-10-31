@@ -15,7 +15,8 @@ Everything in this folder is for the project pages. None of it goes in the addon
 
 ## 1. Build the zip
 
-Commit first, so the zip matches a commit. Then:
+Only for a check on your own computer or an upload by hand: the release workflow builds its own
+zip. Commit first, so the zip matches a commit. Then:
 
 ```
 python tests/kit/package.py
@@ -35,10 +36,8 @@ the changelog first, and says if a file isn't committed yet.
    `https://media.forgecdn.net/`), and in the description put it in place of `IMAGE_HOW_IT_WORKS`
    (under the tagline): the loop shows how OnAir works before anyone reads a word.
 6. License: All Rights Reserved (the same as `LICENSE.txt` and the TOC).
-7. Upload a file: the zip from step 1.
-   - Release type: Release.
-   - Game versions: Retail **12.1.5** (and 12.1.7 if it's listed), WoW Forever **1.60.1**.
-   - Changelog: the newest part of `CHANGELOG.md`.
+7. No file to upload: pushing the version tag does it (see "Automatic uploads" below). Note the
+   project ID on the project page.
 8. CurseForge checks a new project by hand before it goes public. That can take a few days.
 
 ## 3. Wago (addons.wago.io)
@@ -47,8 +46,8 @@ the changelog first, and says if a file isn't committed yet.
    `logo.gif` (if Wago won't take a GIF, `logo.png`).
 2. Add the same gallery images. In the description, put the Wago address of `00-how-it-works.gif`
    (it starts with `https://cdn.wago.io/`) in place of `IMAGE_HOW_IT_WORKS`, as on CurseForge.
-3. Upload the same zip. Supported patches: Retail **12.1.5** and **12.1.7**, Forever **1.60.1**.
-   Stability: Stable.
+3. No file to upload here either: the tag does it. Note the addon's ID (8 letters and digits,
+   under its name on the dashboard).
 
 ## Summary (both sites)
 
@@ -76,17 +75,20 @@ becomes a `shot-...` card in `gallery/`, with the same headline style. Upload th
 1. Add a part for it at the top of `CHANGELOG.md` (`## 1.1.0`) and set `## Version` in `OnAir.toc`.
 2. When the game updates, add its version to `## Interface` in `OnAir.toc` (12.1.5 is 120105,
    Forever 1.60.1 is 16001).
-3. Commit, build the zip, upload it on both sites (or push a tag, below).
+3. Commit, then push a version tag (below).
 
-## Later: automatic uploads (optional)
+## Automatic uploads
 
-`.github/workflows/release.yml` builds the zip and uploads it to both sites when you push a version
-tag. It needs:
+`.github/workflows/release.yml` (BigWigs' packager, the same as Better Great Vault's) builds the
+zip and uploads it to both sites and to the GitHub release when a version tag is pushed. The game
+versions come from the TOC's `## Interface` line (16001 makes it a WoW Forever file too), the notes
+from `CHANGELOG.md`. It needs:
 
-1. The OnAir folder on GitHub (a private repository is fine).
-2. The project IDs in `OnAir.toc`: `## X-Curse-Project-ID: <number>` and `## X-Wago-ID: <id>`. Both
-   sites show the ID on the project page. They aren't secret.
-3. An API token from each site, saved in GitHub (Settings > Secrets and variables > Actions) as
-   `CF_API_KEY` and `WAGO_API_TOKEN`. Make and save these yourself. Never paste a token in a chat.
+1. The repository: `powercover/OnAir` on GitHub (private).
+2. The project IDs in `OnAir.toc`: `## X-Curse-Project-ID: <number>` and `## X-Wago-ID: <id>`.
+   They aren't secret.
+3. An API token from each site, saved in the repository's secrets as `CF_API_KEY` and
+   `WAGO_API_TOKEN` (Settings > Secrets and variables > Actions, or `gh secret set CF_API_KEY -R
+   powercover/OnAir`, which asks for the value). Set these yourself. Never paste a token in a chat.
 4. Then each release is: `git tag 1.1.0`, then `git push origin 1.1.0`. The tag must be the TOC's
    version.
