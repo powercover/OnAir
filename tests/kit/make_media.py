@@ -9,7 +9,7 @@ import math
 import os
 import sys
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 MEDIA = os.path.join(ROOT, "Media")
@@ -42,7 +42,8 @@ def broadcast(d, cx, cy, unit, color, dot=True):
         d.arc(box, 142, 218, fill=color, width=w)
 
 
-def logo(size=128, path=os.path.join(MEDIA, "Logo.tga")):
+def logo():
+    size = 128
     img = canvas(size)
     d = ImageDraw.Draw(img)
     u = size * S
@@ -56,7 +57,54 @@ def logo(size=128, path=os.path.join(MEDIA, "Logo.tga")):
     img = Image.alpha_composite(img, glow)
     d = ImageDraw.Draw(img)
     broadcast(d, u / 2, u / 2, u * 0.95, RED)
-    save(img, path, size)
+    save(img, os.path.join(MEDIA, "Logo.tga"), size)
+
+
+def draw_lamp(img, box):
+    """The ON AIR lamp in box (4x pixels): white letters on red glass lit from behind, in a dark
+    housing, with a soft red glow around it. Returns the new image."""
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(glow).rounded_rectangle(box, radius=w * 0.0625, fill=(255, 59, 48, 170))
+    img = Image.alpha_composite(img, glow.filter(ImageFilter.GaussianBlur(w * 0.075)))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle(box, radius=w * 0.0625, fill=(70, 12, 10, 255))  # the housing
+    inset = w * 0.0275
+    d.rounded_rectangle((x0 + inset, y0 + inset, x1 - inset, y1 - inset), radius=w * 0.044, fill=RED)
+    hot = Image.new("RGBA", img.size, (0, 0, 0, 0))  # the light behind the glass, brightest in the middle
+    ImageDraw.Draw(hot).ellipse((cx - w * 0.31, cy - h * 0.28, cx + w * 0.31, cy + h * 0.28), fill=(255, 140, 120, 120))
+    img = Image.alpha_composite(img, hot.filter(ImageFilter.GaussianBlur(w * 0.075)))
+    font = ImageFont.truetype(os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "bahnschrift.ttf"),
+                              int(w * 0.27))
+    font.set_variation_by_name("Bold Condensed")
+    letters = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ld = ImageDraw.Draw(letters)
+    left, top, right, bottom = ld.textbbox((0, 0), "ON AIR", font=font)
+    ld.text((cx - (left + right) / 2, cy - (top + bottom) / 2), "ON AIR", font=font, fill=(255, 246, 240, 255))
+    img = Image.alpha_composite(img, letters.filter(ImageFilter.GaussianBlur(w * 0.015)))  # the letters glow
+    return Image.alpha_composite(img, letters)
+
+
+def lamp(width):
+    """The lamp alone, width pixels wide, on a clear background with room for its glow (a quarter
+    of the width on every side)."""
+    w = width * S
+    m = w * 0.25
+    img = Image.new("RGBA", (int(w + 2 * m), int(w * 0.45 + 2 * m)), (0, 0, 0, 0))
+    img = draw_lamp(img, (m, m, m + w, m + w * 0.45))
+    return img.resize((img.width // S, img.height // S), Image.LANCZOS)
+
+
+def page_logo(size=512):
+    """CurseForge's and Wago's project logo: the lamp on the dark tile."""
+    img = canvas(size)
+    u = size * S
+    ImageDraw.Draw(img).rounded_rectangle((0, 0, u - 1, u - 1), radius=u * 0.22, fill=INK)
+    w, h = u * 0.80, u * 0.36
+    img = draw_lamp(img, ((u - w) / 2, (u - h) / 2, (u + w) / 2, (u + h) / 2))
+    save(img, os.path.join(ROOT, "release", "logo.png"), size)
 
 
 def minimap_icon():
@@ -392,8 +440,7 @@ ICON_FUNCS = {
 
 if __name__ == "__main__":
     if "--page-logo" in sys.argv:
-        # CurseForge's and Wago's project logo: the same mark, large.
-        logo(512, os.path.join(ROOT, "release", "logo.png"))
+        page_logo()
         sys.exit(0)
     logo()
     minimap_icon()

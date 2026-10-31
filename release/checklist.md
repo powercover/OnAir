@@ -4,6 +4,9 @@ Everything in this folder is for the project pages. None of it goes in the addon
 
 - `description.md`: the long description (paste it on both sites).
 - `logo.png`: the project logo, 512 x 512 (`python tests/kit/make_media.py --page-logo` draws it again).
+- `gallery/`: the images for both sites' galleries, 1920 x 1080 (`python tests/kit/make_gallery.py`
+  draws them again, from OnAir's own windows).
+- `shots/`: your screenshots from the game, for gallery cards of their own (see below).
 
 ## 1. Build the zip
 
@@ -22,35 +25,41 @@ the changelog first, and says if a file isn't committed yet.
 2. Name: **OnAir**. If the address "onair" is taken, pick another one (the name can stay OnAir).
 3. Summary: see below. Description: paste `description.md`.
 4. Logo: `logo.png`. Category: Audio & Video (add Chat & Communication if you like).
-5. License: All Rights Reserved (the same as `LICENSE.txt` and the TOC).
-6. Upload a file: the zip from step 1.
+5. Images: upload everything in `gallery/`, in order (`01-go-live` first: it's the cover).
+6. License: All Rights Reserved (the same as `LICENSE.txt` and the TOC).
+7. Upload a file: the zip from step 1.
    - Release type: Release.
    - Game versions: Retail **12.1.5** (and 12.1.7 if it's listed), WoW Forever **1.60.1**.
    - Changelog: the newest part of `CHANGELOG.md`.
-7. CurseForge checks a new project by hand before it goes public. That can take a few days.
+8. CurseForge checks a new project by hand before it goes public. That can take a few days.
 
 ## 3. Wago (addons.wago.io)
 
 1. In the developer dashboard, create an addon: the same name, summary, description and logo.
-2. Upload the same zip. Supported patches: Retail **12.1.5** and **12.1.7**, Forever **1.60.1**.
+2. Add the same gallery images.
+3. Upload the same zip. Supported patches: Retail **12.1.5** and **12.1.7**, Forever **1.60.1**.
    Stability: Stable.
 
 ## Summary (both sites)
 
-> Streamer & recording mode: swaps player names for aliases in chat, nameplates, frames, tooltips,
-> meters, friends, guild and group finder. Real names come back when you end. Retail and WoW Forever.
+> Streamer mode for WoW: every player name becomes an alias, everywhere. Plus one-key timestamps,
+> screenshots, YouTube chapters and a shield against stream snipers.
 
-## Screenshots to take in the game
+## Screenshots from the game
 
-Take them while live, so no real names show.
+The gallery shows OnAir's own windows. Cards with the game itself sell it best. Take these while live
+(so every name is an alias), in a busy place: a city, a dungeon group, a raid.
 
-1. The console (Broadcast page) while live.
-2. Chat with aliases: party chat and a whisper.
-3. A party or raid frame and a damage meter with aliases.
-4. Friendly players' nameplates showing aliases.
-5. The stream chat window over your chat.
-6. The four looks (Look page), one shot each.
-7. The Deck, and the Moments page with chapters.
+| File name in `shots/` | What to show |
+| --- | --- |
+| `chat` | Chat with aliases: party chat and a whisper. |
+| `nameplates` | Friendly players' nameplates showing aliases. |
+| `meters` | A damage meter in combat, with aliases. |
+| `frames` | Party or raid frames with aliases. |
+| `stream-chat` | The stream chat window over your chat. |
+
+Save them as png or jpg under those names, then run `python tests/kit/make_gallery.py`. Each one
+becomes a `shot-...` card in `gallery/`, with the same headline style. Upload those too.
 
 ## Each new version
 

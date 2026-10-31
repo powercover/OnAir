@@ -200,20 +200,48 @@ LEFT = 50
 
 
 def contours(rows):
-    """One rectangle per run of pixels in a row (clockwise, as TrueType wants outer outlines)."""
-    out = []
+    """The outline of all the glyph's pixels together: outer contours clockwise (as TrueType wants),
+    holes the other way, straight runs as one line. One piece per glyph, not a rectangle per row:
+    rows stacked as separate shapes leave seams that FreeType draws as a faint line through the
+    letters at sizes like 11 and 12."""
+    edges = set()
     for r, pattern in rows.items():
-        y0 = 600 - PIXEL * r
-        c = 0
-        while c < len(pattern):
-            if pattern[c] == "#":
-                start = c
-                while c < len(pattern) and pattern[c] == "#":
-                    c += 1
-                x0, x1 = LEFT + start * PIXEL, LEFT + c * PIXEL
-                out.append([(x0, y0), (x0, y0 + PIXEL), (x1, y0 + PIXEL), (x1, y0)])
+        for c, ch in enumerate(pattern):
+            if ch != "#":
+                continue
+            x0, y0 = LEFT + c * PIXEL, 600 - PIXEL * r
+            x1, y1 = x0 + PIXEL, y0 + PIXEL
+            for a, b in (((x0, y0), (x0, y1)), ((x0, y1), (x1, y1)), ((x1, y1), (x1, y0)), ((x1, y0), (x0, y0))):
+                if (b, a) in edges:
+                    edges.discard((b, a))  # shared by two pixels: inside the shape
+                else:
+                    edges.add((a, b))
+    nexts = {}
+    for a, b in sorted(edges):
+        nexts.setdefault(a, []).append(b)
+    out = []
+    while nexts:
+        start = min(nexts)
+        path, point, came = [start], start, None
+        while True:
+            options = nexts[point]
+            if came is None or len(options) == 1:
+                nxt = options[0]
             else:
-                c += 1
+                # Two pieces touch at a corner: take the sharpest right turn, so each stays simple.
+                dx, dy = point[0] - came[0], point[1] - came[1]
+                nxt = min(options, key=lambda o: dx * (o[1] - point[1]) - dy * (o[0] - point[0]))
+            options.remove(nxt)
+            if not options:
+                del nexts[point]
+            came, point = point, nxt
+            if point == start:
+                break
+            path.append(point)
+        n = len(path)
+        out.append([p for i, p in enumerate(path)
+                    if not (path[i - 1][0] == p[0] == path[(i + 1) % n][0]
+                            or path[i - 1][1] == p[1] == path[(i + 1) % n][1])])
     return out
 
 
