@@ -938,6 +938,65 @@ local function IsCastTarget(fs)
     return false
 end
 
+-- EllesmereUI's raid and party frames: their texts are slots you set up (name, health, level...),
+-- and in instance combat the game sends names and numbers alike as secrets, so a name label can't
+-- be told by its text. The button's own plan says which slots show the name (and its top name
+-- bar): those are watched from their first text on, before any readable name was seen there.
+-- Read from the module's registry, never written; a version without it finds nothing, and its
+-- labels are learned from a readable name as before.
+local euiButton = setmetatable({}, { __mode = "k" }) -- label -> its EllesmereUI button, or false
+
+local function IsEuiNameLabel(fs)
+    local button = euiButton[fs]
+    if button == false then
+        return false
+    end
+    local eui = _G.EllesmereUI
+    local registry = type(eui) == "table" and eui._ModuleNS
+    local ns = type(registry) == "table" and registry.EllesmereUIRaidFrames
+    local buttons = type(ns) == "table" and ns._euiUnitButtons
+    if type(buttons) ~= "table" or type(ns.GetFFD) ~= "function" then
+        euiButton[fs] = false
+        return false
+    end
+    if button == nil then
+        button = false
+        local holder = fs:GetParent()
+        for _ = 1, 3 do
+            if not holder then
+                break
+            end
+            if buttons[holder] then
+                button = holder
+                break
+            end
+            holder = holder:GetParent()
+        end
+        euiButton[fs] = button
+        if not button then
+            return false
+        end
+    end
+    local d = ns.GetFFD(button)
+    if type(d) ~= "table" then
+        return false
+    end
+    if d.topNameBarText == fs then
+        return true
+    end
+    local slots, plan = d._tx, d._txL
+    local names = type(plan) == "table" and plan.name
+    if type(slots) ~= "table" or type(names) ~= "table" then
+        return false
+    end
+    for _, slot in ipairs(names) do
+        if type(slot) == "table" and slots[slot.i] == fs then
+            return true
+        end
+    end
+    return false
+end
+
 local function OnText(obj)
     if busy or not OA.live or exempt[obj] then
         return
@@ -1001,10 +1060,14 @@ local function OnText(obj)
             return
         end
     end
-    if guard[obj] then
-        Mute(obj, "secret", IsSecret(text))
+    local secret = IsSecret(text)
+    if secret and not guard[obj] and IsEuiNameLabel(obj) then
+        guard[obj] = true
     end
-    if not Where("interface") or type(text) ~= "string" or IsSecret(text) or text == "" then
+    if guard[obj] then
+        Mute(obj, "secret", secret)
+    end
+    if not Where("interface") or type(text) ~= "string" or secret or text == "" then
         return
     end
     -- Numbers, timers, bars: no name in there (most of what the UI sets, many times a second).

@@ -670,6 +670,40 @@ cell:SetText("Bob")
 LEARNED_GUARD = hiddenInCombat and cell:GetAlpha() == 1 and not cell:GetText():find("Bob")
 OA.EndLive()
 
+-- EllesmereUI's raid frames: the button's plan says which text slot is the name. A secret name
+-- there is hidden from its first text on, also one already there when going live (mid-fight);
+-- a secret health number on the same button stays, and so does a secret in another addon's
+-- label that never showed a name. All back when the broadcast ends.
+do
+  local euiNS = { _euiUnitButtons = setmetatable({}, { __mode = "k" }) }
+  local euiData = {}
+  function euiNS.GetFFD(button) euiData[button] = euiData[button] or {}; return euiData[button] end
+  EllesmereUI = { _ModuleNS = { EllesmereUIRaidFrames = euiNS } }
+  local button = CreateFrame("Button", nil, UIParent)
+  euiNS._euiUnitButtons[button] = true
+  local carrier = CreateFrame("Frame", nil, button)
+  local healthSlot, nameSlot = carrier:CreateFontString(), carrier:CreateFontString()
+  local topName = CreateFrame("Frame", nil, button):CreateFontString()
+  local d = euiNS.GetFFD(button)
+  d._tx, d._txL, d.topNameBarText = { healthSlot, nameSlot }, { name = { { i = 2 } } }, topName
+  nameSlot:SetText({ __secret = true })
+  OA.GoLive(); run(1)
+  local hiddenAtStart = nameSlot:GetAlpha() == 0
+  healthSlot:SetText({ __secret = true })
+  topName:SetText({ __secret = true })
+  local stranger = CreateFrame("Frame", nil, UIParent):CreateFontString()
+  stranger:SetText({ __secret = true })
+  local onlyNames = healthSlot:GetAlpha() == 1 and topName:GetAlpha() == 0 and stranger:GetAlpha() == 1
+  nameSlot:SetText("Bob")
+  local readable = nameSlot:GetAlpha() == 1 and not nameSlot:GetText():find("Bob")
+  nameSlot:SetText({ __secret = true })
+  OA.EndLive()
+  EUI_RAID_NAMES = hiddenAtStart and onlyNames and readable and nameSlot:GetAlpha() == 1 and topName:GetAlpha() == 1
+  EUI_RAID_DBG = string.format("start=%s only=%s readable=%s after=%s/%s", tostring(hiddenAtStart),
+    tostring(onlyNames), tostring(readable), tostring(nameSlot:GetAlpha()), tostring(topName:GetAlpha()))
+  EllesmereUI = nil
+end
+
 -- group finder: a listing's leader and members are learned; an unnamed addon tooltip is scrubbed
 OA.GoLive()
 fire("LFG_LIST_SEARCH_RESULT_UPDATED", 7)
@@ -1130,7 +1164,7 @@ def run(toc, look="viewfinder"):
                               "SNAP_FREE", "DONE_OK", "SNAP_RIGHT_CENTER", "SNAP_PIECE",
                               "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS",
                               "SNAP_MODES", "LIVE_DRAG", "FIRST_EDIT", "PANELS_OPENED",
-                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "METER_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
+                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "EUI_RAID_NAMES", "EUI_RAID_DBG", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "METER_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
 
 
 # One login (or /reload) with the blank name font: what the game's name fonts hold after OnAir's
@@ -1269,6 +1303,7 @@ if __name__ == "__main__":
                     (results["LIVE_DRAG"], "Deck sticks to a guide while dragged; its buttons are locked"),
                     (results["METER_SWEEP"], "meter rows named before going live get masked, and restored after"),
                     (results["LEARNED_GUARD"], "any frame that showed a name hides it while it's secret (other addons' raid frames)"),
+                    (results["EUI_RAID_NAMES"], "EllesmereUI raid frames: a secret name slot is hidden from its first text, health stays " + str(results["EUI_RAID_DBG"])),
                     (results["METER_ALIAS_OK"], "meter rows in combat: your row and remembered players read as their alias"),
                     (results["OVERHEAD_OK"], "names above heads: name-only plates while live, off in instances, your settings back after"),
                     (results["BLANK_PAGE_OK"], "blank name font: the Hide page says where it stands; switching it in a session sets nothing"),
