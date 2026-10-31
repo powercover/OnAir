@@ -3,13 +3,14 @@ glyph icons. Everything is drawn white (except the logos) at 4x and scaled down,
 tint it with SetVertexColor and the edges stay smooth.
 
 python tests/kit/make_media.py
-python tests/kit/make_media.py --page-logo   (only the logo for the project pages: release/logo.png)
+python tests/kit/make_media.py --page-logo   (only the logo for the project pages: release/logo.png
+                                             and its animated version, release/logo.gif)
 """
 import math
 import os
 import sys
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 MEDIA = os.path.join(ROOT, "Media")
@@ -60,21 +61,33 @@ def logo():
     save(img, os.path.join(MEDIA, "Logo.tga"), size)
 
 
-def draw_lamp(img, box):
+GLASS_OFF, LETTERS_OFF = (84, 20, 18), (122, 98, 95)  # the lamp switched off
+
+
+def mix(a, b, k):
+    return tuple(round(x + (y - x) * k) for x, y in zip(a, b))
+
+
+def draw_lamp(img, box, power=1.0, gleam=None):
     """The ON AIR lamp in box (4x pixels): white letters on red glass lit from behind, in a dark
-    housing, with a soft red glow around it. Returns the new image."""
+    housing, with a soft red glow around it. power: 1 is lit, 0 switched off, a little over 1 the
+    flare as it comes on. gleam (0..1): a light sliding across the glass, left to right. Returns the
+    new image."""
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    lit = min(power, 1.0)
     glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    ImageDraw.Draw(glow).rounded_rectangle(box, radius=w * 0.0625, fill=(255, 59, 48, 170))
+    ImageDraw.Draw(glow).rounded_rectangle(box, radius=w * 0.0625, fill=(255, 59, 48, round(170 * power)))
     img = Image.alpha_composite(img, glow.filter(ImageFilter.GaussianBlur(w * 0.075)))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle(box, radius=w * 0.0625, fill=(70, 12, 10, 255))  # the housing
     inset = w * 0.0275
-    d.rounded_rectangle((x0 + inset, y0 + inset, x1 - inset, y1 - inset), radius=w * 0.044, fill=RED)
+    glass = (x0 + inset, y0 + inset, x1 - inset, y1 - inset)
+    d.rounded_rectangle(glass, radius=w * 0.044, fill=mix(GLASS_OFF, RED[:3], lit) + (255,))
     hot = Image.new("RGBA", img.size, (0, 0, 0, 0))  # the light behind the glass, brightest in the middle
-    ImageDraw.Draw(hot).ellipse((cx - w * 0.31, cy - h * 0.28, cx + w * 0.31, cy + h * 0.28), fill=(255, 140, 120, 120))
+    ImageDraw.Draw(hot).ellipse((cx - w * 0.31, cy - h * 0.28, cx + w * 0.31, cy + h * 0.28),
+                                fill=(255, 140, 120, round(120 * power)))
     img = Image.alpha_composite(img, hot.filter(ImageFilter.GaussianBlur(w * 0.075)))
     font = ImageFont.truetype(os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "bahnschrift.ttf"),
                               int(w * 0.27))
@@ -82,9 +95,33 @@ def draw_lamp(img, box):
     letters = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ld = ImageDraw.Draw(letters)
     left, top, right, bottom = ld.textbbox((0, 0), "ON AIR", font=font)
-    ld.text((cx - (left + right) / 2, cy - (top + bottom) / 2), "ON AIR", font=font, fill=(255, 246, 240, 255))
-    img = Image.alpha_composite(img, letters.filter(ImageFilter.GaussianBlur(w * 0.015)))  # the letters glow
-    return Image.alpha_composite(img, letters)
+    ld.text((cx - (left + right) / 2, cy - (top + bottom) / 2), "ON AIR", font=font,
+            fill=mix(LETTERS_OFF, (255, 246, 240), lit) + (255,))
+    halo = letters.filter(ImageFilter.GaussianBlur(w * 0.015))  # the letters glow
+    if lit < 1:
+        halo.putalpha(halo.getchannel("A").point(lambda v: round(v * lit)))
+    img = Image.alpha_composite(Image.alpha_composite(img, halo), letters)
+    if gleam is not None:
+        img = Image.alpha_composite(img, gleam_layer(img.size, glass, w, gleam))
+    return img
+
+
+def gleam_layer(size, glass, w, k):
+    """Light sliding across the lamp's glass: a soft slanted band and a thin one beside it, k (0..1)
+    of the way from left to right, kept inside the glass."""
+    gx0, gy0, gx1, gy1 = glass
+    slant = (gy1 - gy0) * 0.45
+    x = gx0 - w * 0.25 + (gx1 - gx0 + w * 0.25) * k
+    band = Image.new("L", size, 0)
+    bd = ImageDraw.Draw(band)
+    for offset, width, alpha in ((0, w * 0.05, 72), (w * 0.075, w * 0.016, 48)):
+        bx = x + offset
+        bd.polygon([(bx, gy1), (bx + width, gy1), (bx + width + slant, gy0), (bx + slant, gy0)], fill=alpha)
+    clip = Image.new("L", size, 0)
+    ImageDraw.Draw(clip).rounded_rectangle(glass, radius=w * 0.044, fill=255)
+    layer = Image.new("RGBA", size, (255, 240, 235, 0))
+    layer.putalpha(ImageChops.multiply(band.filter(ImageFilter.GaussianBlur(w * 0.008)), clip))
+    return layer
 
 
 def lamp(width):
@@ -105,6 +142,44 @@ def page_logo(size=512):
     w, h = u * 0.80, u * 0.36
     img = draw_lamp(img, ((u - w) / 2, (u - h) / 2, (u + w) / 2, (u + h) / 2))
     save(img, os.path.join(ROOT, "release", "logo.png"), size)
+
+
+def page_logo_gif(size=400):
+    """The logo as a 6-second loop (CurseForge plays a GIF logo, 400 x 400 like the one it asks
+    for): lit, switched off, back on with a flicker and a flare, then a gleam across the glass. On a
+    square tile with no see-through corners, since a GIF's edges can't be soft. The first frame is
+    the lit lamp, for places that show one frame only."""
+    u = size * S
+    w, h = u * 0.80, u * 0.36
+    box = ((u - w) / 2, (u - h) / 2, (u + w) / 2, (u + h) / 2)
+    fps = 25
+    power = ([1.0] * 70 + [0.55, 0.25, 0.08] + [0.0] * 17             # lit, then switched off
+             + [0.9, 0.15, 0.0, 0.0, 0.75, 0.3]                       # the flicker
+             + [1 + 0.25 * (1 - k / 12) ** 2 for k in range(13)])     # on, with a flare that settles
+    power += [1.0] * (6 * fps - len(power))
+    drawn, frames = {}, []
+    for i, pw in enumerate(power):
+        k = (i - 100) / 24
+        gleam = 0.5 - 0.5 * math.cos(math.pi * k) if 0 <= k <= 1 else None
+        if (pw, gleam) not in drawn:
+            tile = Image.new("RGBA", (u, u), INK)
+            drawn[pw, gleam] = draw_lamp(tile, box, pw, gleam).resize((size, size), Image.LANCZOS).convert("RGB")
+        frames.append(drawn[pw, gleam])
+    # One palette for every frame, so the lit frames stay identical (the GIF stores them once) and
+    # nothing shimmers. Most of it is the lit lamp's, which shows nearly all the time, so its glow
+    # doesn't band; the rest comes from the dark, dimming, flickering, flaring and gleaming lamp.
+    others = [frames[i] for i in (80, 70, 71, 72, 91, 95, 96, 112)]
+    sheet = Image.new("RGB", (size, size * len(others)))
+    for i, f in enumerate(others):
+        sheet.paste(f, (0, i * size))
+    lit = frames[0].quantize(colors=168, method=Image.Quantize.MEDIANCUT).getpalette()[:168 * 3]
+    rest = sheet.quantize(colors=88, method=Image.Quantize.MEDIANCUT).getpalette()[:88 * 3]
+    palette = Image.new("P", (1, 1))
+    palette.putpalette(lit + rest)
+    gif = [f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames]
+    path = os.path.join(ROOT, "release", "logo.gif")
+    gif[0].save(path, save_all=True, append_images=gif[1:], duration=1000 // fps, loop=0, optimize=True)
+    print(f"wrote {path}: {len(gif)} frames, {os.path.getsize(path) // 1024} KB")
 
 
 def minimap_icon():
@@ -441,6 +516,7 @@ ICON_FUNCS = {
 if __name__ == "__main__":
     if "--page-logo" in sys.argv:
         page_logo()
+        page_logo_gif()
         sys.exit(0)
     logo()
     minimap_icon()

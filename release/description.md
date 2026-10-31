@@ -2,6 +2,8 @@
 
 ### The broadcast studio inside World of Warcraft.
 
+![How OnAir goes live](IMAGE_HOW_IT_WORKS)
+
 **Go live without giving anyone away.** OnAir turns every player name in your interface into an alias, gives you the tools a stream or a video needs, and puts everything back the moment you end. No reload.
 
 > **What OnAir is, and isn't.** OnAir is a streamer mode: it hides real names on your screen and adds tools for streaming and recording. It doesn't record or stream video itself. Keep using OBS, Streamlabs, NVIDIA or AMD. OnAir gets the game ready for the camera.

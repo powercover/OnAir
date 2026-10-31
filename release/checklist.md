@@ -2,8 +2,11 @@
 
 Everything in this folder is for the project pages. None of it goes in the addon zip.
 
-- `description.md`: the long description (paste it on both sites).
-- `logo.png`: the project logo, 512 x 512 (`python tests/kit/make_media.py --page-logo` draws it again).
+- `description.md`: the long description, in Markdown (paste it on both sites).
+- `logo.gif`: the project logo, animated: 400 x 400, a 6-second loop of the lamp switching off and
+  back on, with a gleam across the glass. CurseForge plays a GIF logo (Better Great Vault's does).
+  The first frame is the lit lamp, so a site that shows one frame still shows the logo. `logo.png`
+  is the same logo, still, 512 x 512 (`python tests/kit/make_media.py --page-logo` draws both).
 - `gallery/`: the images for both sites' galleries, 1920 x 1080 (`python tests/kit/make_gallery.py`
   draws them again, from OnAir's own windows), and `00-how-it-works.gif`, an 8-second loop of
   OnAir's own widgets going live and back: the Deck's handle, the ON AIR slate, the stream chat with
@@ -25,11 +28,12 @@ the changelog first, and says if a file isn't committed yet.
 
 1. Create a project: World of Warcraft, Addons.
 2. Name: **OnAir**. If the address "onair" is taken, pick another one (the name can stay OnAir).
-3. Summary: see below. Description: paste `description.md`.
-4. Logo: `logo.png`. Category: Audio & Video (add Chat & Communication if you like).
-5. Images: upload everything in `gallery/`, in order (`01-go-live` first: it's the cover). Then put
-   `00-how-it-works.gif` at the very top of the description (the editor's image button can pick it
-   from the uploaded images): it shows how OnAir works before anyone reads a word.
+3. Summary: see below. Description: paste `description.md` as it is, in the editor's Markdown mode.
+4. Logo: `logo.gif`. Category: Audio & Video (add Chat & Communication if you like).
+5. Images: upload everything in `gallery/`, in order (`01-go-live` first: it's the cover). Then
+   open the uploaded `00-how-it-works.gif`, copy its address (it starts with
+   `https://media.forgecdn.net/`), and in the description put it in place of `IMAGE_HOW_IT_WORKS`
+   (under the tagline): the loop shows how OnAir works before anyone reads a word.
 6. License: All Rights Reserved (the same as `LICENSE.txt` and the TOC).
 7. Upload a file: the zip from step 1.
    - Release type: Release.
@@ -39,8 +43,10 @@ the changelog first, and says if a file isn't committed yet.
 
 ## 3. Wago (addons.wago.io)
 
-1. In the developer dashboard, create an addon: the same name, summary, description and logo.
-2. Add the same gallery images.
+1. In the developer dashboard, create an addon: the same name, summary and description. Logo:
+   `logo.gif` (if Wago won't take a GIF, `logo.png`).
+2. Add the same gallery images. In the description, put the Wago address of `00-how-it-works.gif`
+   (it starts with `https://cdn.wago.io/`) in place of `IMAGE_HOW_IT_WORKS`, as on CurseForge.
 3. Upload the same zip. Supported patches: Retail **12.1.5** and **12.1.7**, Forever **1.60.1**.
    Stability: Stable.
 

@@ -100,21 +100,29 @@ def dot(d, center, size, color):
 
 # ------------------------------------------------------------------------------------------- backdrop
 
+def blend(stops, k):
+    """The color at k along stops [(k, color), ...]."""
+    for (k0, c0), (k1, c1) in zip(stops, stops[1:]):
+        if k <= k1:
+            t = max(0.0, (k - k0) / (k1 - k0))
+            return tuple(round(a + (b - a) * t) for a, b in zip(c0, c1))
+    return stops[-1][1]
+
+
 def backdrop():
-    """Dusk over three ridges of purple mountains: quiet, so the dark widgets stand out as they do in
-    the game. Drawn at the size shown."""
+    """A sunset over three ridges: lighter than the widgets, so they stand out as they do over the
+    game's world, and blue where their red shows. Drawn at the size shown."""
     w, h = W, H
     img = Image.new("RGB", (w, h))
     d = ImageDraw.Draw(img)
-    top, low = (30, 22, 46), (112, 66, 112)
+    sky = [(0.0, (36, 52, 104)), (0.30, (84, 92, 160)), (0.50, (196, 122, 152)), (0.64, (250, 182, 134))]
     for y in range(h):
-        k = min(1, y / (h * 0.62))
-        d.line((0, y, w, y), fill=tuple(round(a + (b - a) * k) for a, b in zip(top, low)))
+        d.line((0, y, w, y), fill=blend(sky, y / h))
     glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse((w * 0.62, h * 0.30, w * 0.80, h * 0.62), fill=(255, 176, 190, 110))
-    img = Image.alpha_composite(img.convert("RGBA"), glow.filter(ImageFilter.GaussianBlur(h * 0.09)))
+    ImageDraw.Draw(glow).ellipse((w * 0.60, h * 0.34, w * 0.82, h * 0.70), fill=(255, 222, 176, 150))
+    img = Image.alpha_composite(img.convert("RGBA"), glow.filter(ImageFilter.GaussianBlur(h * 0.08)))
     d = ImageDraw.Draw(img)
-    ridges = [((90, 56, 108), 0.60, 0.10, 1.0), ((64, 40, 86), 0.72, 0.12, 2.3), ((38, 25, 55), 0.86, 0.09, 4.1)]
+    ridges = [((132, 112, 172), 0.60, 0.10, 1.0), ((92, 84, 150), 0.72, 0.12, 2.3), ((60, 58, 116), 0.86, 0.09, 4.1)]
     for color, base, amp, seed in ridges:
         pts = [(0, h)]
         for x in range(0, w + 8, 8):
@@ -243,23 +251,40 @@ def widgets(t):
     return layer.resize((W, H), Image.LANCZOS)
 
 
+def ramps():
+    """Every widget and chat color, and its blends into the panel (the edges of the letters)."""
+    out = []
+    for color in (RED, RED_DEEP, TEXT, MUTED, FAINT, LINE, OFF, LOOT, EPIC, WHITE, YELL, SAY, NOTE):
+        for k in (0.3, 0.55, 0.8, 1.0):
+            out += [round(a + (b - a) * k) for a, b in zip(PANEL, color)]
+    return out
+
+
 def main():
     times = [i / FPS for i in range(round(LENGTH * FPS))]
     layers = [widgets(t) for t in times]
     back = backdrop()
-    # One palette for all: half for the backdrop's dusk, half for the widgets (from moments that show
-    # every color). The backdrop is dithered into it once, so it stays smooth and still while the
-    # widgets move over it.
-    samples = [Image.alpha_composite(back, layers[round(t * FPS)]).convert("RGB")
-               for t in (0.2, GO_LIVE + 0.4, 4.6, END + 1.0)]
-    sheet = Image.new("RGB", (W, H * len(samples)))
-    for i, s in enumerate(samples):
-        sheet.paste(s, (0, i * H))
-    dusk = back.convert("RGB").quantize(colors=128, method=Image.Quantize.MEDIANCUT).getpalette()[:128 * 3]
-    ui = sheet.quantize(colors=128, method=Image.Quantize.MEDIANCUT).getpalette()[:128 * 3]
-    palette = Image.new("P", (1, 1))
-    palette.putpalette(dusk + ui)
-    still = back.convert("RGB").quantize(palette=palette, dither=Image.Dither.FLOYDSTEINBERG).convert("RGBA")
+    # One palette for all: the backdrop's sunset; every widget and chat color with its blends, since
+    # a few letters' colors (the loot line's green) are too rare to win a place of their own; and the
+    # rest from the widgets' own pixels, at moments that show every widget. The backdrop is dithered
+    # once, with the sunset's colors only (not the widgets' reds), so it stays smooth and still while
+    # the widgets move over it.
+    shown = []
+    for t in (0.2, GO_LIVE + 0.4, 4.6, END + 1.0):
+        layer = layers[round(t * FPS)]
+        frame = Image.alpha_composite(back, layer).convert("RGB")
+        shown += [c for c, a in zip(frame.get_flattened_data(), layer.getchannel("A").get_flattened_data()) if a > 16]
+    strip = Image.new("RGB", (len(shown), 1))
+    strip.putdata(shown)
+    fixed = ramps()
+    room = 256 - 112 - len(fixed) // 3
+    # (max coverage: median cut leaves too few of the sun glow's blends, and its edge dithers into dots)
+    dusk = back.convert("RGB").quantize(colors=112, method=Image.Quantize.MAXCOVERAGE).getpalette()[:112 * 3]
+    ui = strip.quantize(colors=room, method=Image.Quantize.MEDIANCUT).getpalette()[:room * 3]
+    palette, sunset = Image.new("P", (1, 1)), Image.new("P", (1, 1))
+    palette.putpalette(dusk + fixed + ui)
+    sunset.putpalette(dusk + dusk[-3:] * (256 - len(dusk) // 3))
+    still = back.convert("RGB").quantize(palette=sunset, dither=Image.Dither.FLOYDSTEINBERG).convert("RGBA")
     gif = [Image.alpha_composite(still, layer).convert("RGB").quantize(palette=palette, dither=Image.Dither.NONE)
            for layer in layers]
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
