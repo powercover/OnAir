@@ -6,3 +6,5 @@ CLAUDE.md
 tests/renders/
 # release zips (tests/kit/package.py)
 dist/
+# Windows folder settings
+desktop.ini
