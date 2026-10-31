@@ -233,7 +233,10 @@ C_BattleNet = { GetFriendAccountInfo = function() return { bnetAccountID = 7, ac
 C_Club = { GetSubscribedClubs = function() return { { clubId = 1, name = "Cozy Club", clubType = 1 } } end,
   GetClubMembers = function() return { 1 } end, GetMemberInfo = function() return { name = "Clubber-Kazzak" } end }
 C_GuildInfo = { GuildRoster = noop }
-C_LFGList = { GetSearchResults = function() return 0, {} end, GetApplicants = function() return {} end }
+C_LFGList = { GetSearchResults = function() return 0, {} end, GetApplicants = function() return {} end,
+  GetSearchResultInfo = function(id) return { leaderName = "Granydead-Archimonde", numMembers = 2 } end,
+  GetSearchResultPlayerInfo = function(id, i) return ({ { name = "Granydead-Archimonde" }, { name = "Darkares-Archimonde" } })[i] end }
+C_RecentAllies = { GetRecentAllies = function() return { { characterData = { name = "Nninno", realmName = "Kazzak" } } } end }
 C_ChatInfo = { InChatMessagingLockdown = function() return false end }
 C_ChatBubbles = { GetAllChatBubbles = function() return {} end }
 local menus = {}
@@ -604,6 +607,169 @@ OA.Camera.StopOrbit(); OA.db.camera.orbitStop.move = true
 ORBIT_STOPS = m1 and m2 and m3 and m4
 OA.EndLive()
 
+-- a damage meter row named before going live is masked once live, and its name comes back after
+DamageMeter = CreateFrame("Frame", "DamageMeter")
+local dmWindow = CreateFrame("Frame", "DamageMeterSessionWindow1", DamageMeter)
+local dmEntry = CreateFrame("Button", nil, dmWindow)
+local dmBar = CreateFrame("StatusBar", nil, dmEntry)
+dmBar.Name = dmBar:CreateFontString()
+dmBar.Name:SetText("1. Bob")
+OA.GoLive()
+local dmLive = dmBar.Name:GetText()
+OA.EndLive()
+METER_SWEEP = dmLive ~= nil and not dmLive:find("Bob") and dmBar.Name:GetText() == "1. Bob"
+
+-- text on screen before going live is masked by the sweep; a reshuffle while live re-masks it;
+-- ending the broadcast puts the real text back (no reload)
+-- (a frame the game answers with secret booleans is skipped, the sweep goes on)
+local odd = CreateFrame("Frame", nil, UIParent)
+odd.IsVisible = function() return { __secret = true } end
+odd.IsForbidden = function() return { __secret = true } end
+local panel = CreateFrame("Frame", nil, UIParent)
+local label = panel:CreateFontString()
+label:SetText("Bob joined")
+-- (a closed window too: its text was set at login and won't be set again when it opens)
+local closed = CreateFrame("Frame", nil, UIParent)
+local tag = closed:CreateFontString()
+tag:SetText("Bob joined")
+closed:Hide()
+OA.GoLive(); run(0.5)
+local swept = label:GetText()
+closedSwept = tag:GetText()
+OA.NamesChanged(true); run(0.5)
+local reshuffled = label:GetText()
+-- (an object swapped out under us: putting back skips it, no error)
+local swapped = CreateFrame("Frame", nil, UIParent):CreateFontString()
+swapped:SetText("Bob waves")
+swapped.IsForbidden = function() error("Wrong object type for function") end
+OA.EndLive()
+UNDO_OK = not closedSwept:find("Bob") and swept ~= nil and not swept:find("Bob") and reshuffled ~= nil and not reshuffled:find("Bob")
+  and label:GetText() == "Bob joined"
+
+-- another addon's raid frame: its name label showed a name, then gets a secret one in combat:
+-- hidden while secret, back when readable
+local cell = CreateFrame("Frame", nil, UIParent):CreateFontString()
+OA.GoLive()
+cell:SetText("Bob")
+cell:SetText({ __secret = true })
+local hiddenInCombat = cell:GetAlpha() == 0
+cell:SetText("Bob")
+LEARNED_GUARD = hiddenInCombat and cell:GetAlpha() == 1 and not cell:GetText():find("Bob")
+OA.EndLive()
+
+-- group finder: a listing's leader and members are learned; an unnamed addon tooltip is scrubbed
+OA.GoLive()
+fire("LFG_LIST_SEARCH_RESULT_UPDATED", 7)
+local tip = CreateFrame("GameTooltip")
+local line = tip:CreateFontString()
+line:SetText("Members: Darkares, Granydead")
+tip:Show()
+LFG_OK = not line:GetText():find("Darkares") and not line:GetText():find("Granydead")
+OA.EndLive()
+
+-- /onair check: a real name left on screen is found (exempt text is skipped)
+OA.GoLive(); run(1)
+OA.Names.AddFull("Zorgal-Kazzak", "other")
+local baseline = OA.Check.Run()
+local exemptLabel = CreateFrame("Frame", "ExemptFrame", UIParent):CreateFontString()
+OA.Hide.Exempt(exemptLabel)
+exemptLabel._text = "Zorgal says hi"   -- set behind OnAir's back
+local exemptLeaks = OA.Check.Run()
+local leak = CreateFrame("Frame", "LeakyFrame", UIParent):CreateFontString()
+leak._text = "Zorgal says hi"
+local leaks = OA.Check.Run()
+local linkOnly = CreateFrame("Frame", "LinkFrame", UIParent):CreateFontString()
+linkOnly._text = "|Hplayer:Zorgal-Kazzak:1|h[The Star]|h: hi"   -- a chat link: the real name is only in its data
+local withLink = OA.Check.Run()
+CHECK_OK = exemptLeaks == baseline and leaks == baseline + 1 and withLink == leaks
+OA.EndLive()
+
+-- recent allies (the friends window's Recent tab) are learned when going live
+OA.GoLive()
+local ally = CreateFrame("Frame", nil, UIParent):CreateFontString()
+ally:SetText("Nninno | 90 | Warlock")
+ALLY_OK = not ally:GetText():find("Nninno")
+OA.EndLive()
+
+-- names learned late (the guild roster arrives after going live) reach old text too
+local motd = CreateFrame("Frame", nil, UIParent):CreateFontString()
+motd:SetText("Raid tonight, ask Quillon")    -- set before going live, before OnAir knew the name
+OA.GoLive(); run(1)
+OA.Names.AddFull("Quillon-Kazzak", "other")
+run(0.2)
+LATE_OK = not motd:GetText():find("Quillon")
+OA.EndLive()
+
+-- a friend's BattleTag without its number (EllesmereUI's friends tooltip) reads as their alias
+OA.GoLive()
+OA.Names.AddBNet(77, "|Kq77|k", "DarkStriker#2468", "Ponky-Kazzak")
+local tagRow = CreateFrame("Frame", nil, UIParent):CreateFontString()
+tagRow:SetText("|cffffd100DarkStriker|r (Ponky) 90")
+TAG_OK = not tagRow:GetText():find("DarkStriker") and not tagRow:GetText():find("Ponky")
+OA.EndLive()
+
+-- a nameplate made after going live (from a pool): its cast target is hidden as soon as it's set
+OA.GoLive()
+local newPlate = CreateFrame("Frame", nil, UIParent)
+newPlate.castTextFrame = CreateFrame("Frame", nil, newPlate)
+newPlate.castTarget = newPlate.castTextFrame:CreateFontString()
+newPlate.castTarget:SetText("Bob")
+CAST_OK = newPlate.castTarget:GetAlpha() == 0
+OA.EndLive()
+
+-- the audit's fixes: strangers by realm, cut-short names, text boxes, saved data, secret labels
+AlterEgoDB = { global = { characters = { g1 = { info = { name = "Altbro", realm = "Kazzak" } } } } }
+WhisperMessengerDB = { conversations = { ["WOW::Oldpal-Kazzak"] = { displayName = "Oldpal-Kazzak", battleTag = "Oldpal#4321" } } }
+OA.GoLive(); run(0.5)
+local function masked(text, ...)
+  local fs = CreateFrame("Frame", nil, UIParent):CreateFontString()
+  fs:SetText(text)
+  local out = fs:GetText()
+  for _, word in ipairs({ ... }) do if out:find(word, 1, true) then return false end end
+  return true
+end
+local stranger = masked("Sent by Zorbax-Kazzak", "Zorbax") and masked("Quillax (Kazzak)", "Quillax")
+local cut = masked("Altb…", "Altb")
+local alts = masked("Altbro has 3", "Altbro")
+local wm = masked("Oldpal says hi", "Oldpal")
+local box = CreateFrame("EditBox", "SomeCopyBox", UIParent)
+box:SetText("https://raider.io/characters/eu/kazzak/Altbro")
+local chatBox = CreateFrame("EditBox", "ChatFrame1EditBox", UIParent)
+chatBox:SetText("/w Altbro hi")
+-- text boxes are never touched (they can hold the keyboard)
+local boxes = box:GetText():find("Altbro") ~= nil and chatBox:GetText():find("Altbro") ~= nil
+local castbar = CreateFrame("Frame", nil, UIParent)
+castbar.Target = castbar:CreateFontString()
+castbar.Target:SetText({ __secret = true })
+local secretCast = castbar.Target:GetAlpha() == 0
+local dbm = CreateFrame("Frame", "DBMWarning1", UIParent)
+local font = dbm:CreateFontString("DBMWarning1Font")
+font:SetText({ __secret = true })
+local dbmHidden = font:GetAlpha() == 0
+font:SetText("Interrupt now")
+local dbmBack = font:GetAlpha() == 1
+fire("CHAT_MSG_WHISPER", "psst", "Whisperguy-Kazzak")
+local whisper = masked("Whisperguy says", "Whisperguy")
+OA.EndLive()
+AUDIT_OK = stranger and cut and alts and wm and boxes and secretCast and dbmHidden and dbmBack and whisper
+AUDIT_DBG = table.concat({ tostring(stranger), tostring(cut), tostring(alts), tostring(wm), tostring(boxes),
+  tostring(secretCast), tostring(dbmHidden), tostring(dbmBack), tostring(whisper) }, " ")
+
+-- notes: a label holding a friend's note is emptied while live and back after; the word alone
+-- elsewhere stays
+OA.Names.AddNote("my cousin Steve, real name inside")
+OA.Names.AddNote("tank")
+OA.GoLive()
+local noteLabel = CreateFrame("Frame", nil, UIParent):CreateFontString()
+noteLabel:SetText("|cff888888my cousin Steve, real name inside|r")
+local prefixed = CreateFrame("Frame", nil, UIParent):CreateFontString()
+prefixed:SetText("Note: tank")
+local sentence = CreateFrame("Frame", nil, UIParent):CreateFontString()
+sentence:SetText("The tank pulls")
+local emptied = noteLabel:GetText() == "" and prefixed:GetText() == "" and sentence:GetText() == "The tank pulls"
+OA.EndLive()
+NOTES_OK = emptied and noteLabel:GetText():find("Steve") ~= nil
+
 -- skins switch live: every skin's console, Deck and quick panels work, then back
 local built = 0
 UI.ShowConsole()
@@ -663,7 +829,7 @@ def run(toc, look="viewfinder"):
                               "SNAP_FREE", "DONE_OK", "SNAP_RIGHT_CENTER", "SNAP_PIECE",
                               "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS",
                               "SNAP_MODES", "LIVE_DRAG", "FIRST_EDIT", "PANELS_OPENED",
-                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH")}
+                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK")}
 
 
 if __name__ == "__main__":
@@ -717,6 +883,17 @@ if __name__ == "__main__":
                     (results["LOCK_OK"], "Lock positions stops dragging"),
                     (results["SNAP_MODES"], "snapping modes: Guides skips the grid, Free skips all"),
                     (results["LIVE_DRAG"], "Deck sticks to a guide while dragged; its buttons are locked"),
+                    (results["METER_SWEEP"], "meter rows named before going live get masked, and restored after"),
+                    (results["LEARNED_GUARD"], "any frame that showed a name hides it while it's secret (other addons' raid frames)"),
+                    (results["NOTES_OK"], "friend and guild notes are emptied while live (whole label only), back after"),
+                    (results["AUDIT_OK"], "audit fixes: strangers by realm, cut names, saved data, secret labels, whispers; text boxes untouched"),
+                    (results["CAST_OK"], "a pooled nameplate's cast target is hidden as soon as it gets text"),
+                    (results["TAG_OK"], "a friend's BattleTag without its number is masked (EllesmereUI friends tooltip)"),
+                    (results["LATE_OK"], "names learned late reach text already on screen (guild message)"),
+                    (results["ALLY_OK"], "recent allies (friends window, Recent tab) are masked"),
+                    (results["CHECK_OK"], "/onair check finds a real name left on screen (and skips exempt text)"),
+                    (results["LFG_OK"], "group finder members learned; unnamed addon tooltips scrubbed"),
+                    (results["UNDO_OK"], "text from before live gets masked, re-masked on reshuffle, put back after (no reload)"),
                     (results["SKIN_SWITCH"], "skins switch live: console, Deck and panels in each"),
                 ]
                 for ok, what in checks:

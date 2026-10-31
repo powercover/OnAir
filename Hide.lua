@@ -21,6 +21,23 @@ local function Where(key)
     return OA.live and OA.db.where[key] ~= false
 end
 
+-- The game can answer "is it forbidden / visible" with a secret boolean, which can't be tested:
+-- a secret answer counts as forbidden and not visible.
+local function Usable(obj)
+    if obj.IsForbidden then
+        local ok, forbidden = pcall(obj.IsForbidden, obj)
+        if not ok or IsSecret(forbidden) or forbidden then
+            return false
+        end
+    end
+    return true
+end
+
+local function Visible(obj)
+    local visible = obj:IsVisible()
+    return not IsSecret(visible) and visible == true
+end
+
 ---------------------------------------------------------------------------------------------- CVars
 
 local CVARS = {
@@ -91,6 +108,9 @@ end
 function Hide.OnCombatEnd()
     local todo = pendingCVars
     pendingCVars = nil
+    if OA.live and Hide.Meters then
+        Utils.Guard("meters", Hide.Meters)()
+    end
     if todo == "apply" and OA.live then
         Hide.ApplyCVars()
     elseif todo == "restore" then
@@ -268,6 +288,32 @@ local function Remember(obj)
     ring[ringPos] = obj
 end
 
+-- Words left as they were (no name OnAir knows yet) -> the labels holding them. When one of them
+-- turns out to be a name, only those labels are looked at again: no sweeping the whole UI.
+local waiting = {}
+
+local function Wait(obj, text)
+    for word in text:gmatch("[%a\128-\255][%w\128-\255'%-]*") do
+        local first = word:byte(1)
+        -- Names start with a capital (or a letter outside plain ASCII).
+        if #word >= 2 and (first >= 128 or (first >= 65 and first <= 90)) then
+            local holders = waiting[word]
+            if not holders then
+                holders = setmetatable({}, { __mode = "k" })
+                waiting[word] = holders
+            end
+            holders[obj] = true
+            -- "Name-Realm": the name alone may be what gets learned.
+            local short = word:match("^(.-)%-")
+            if short and #short >= 2 then
+                local list = waiting[short] or setmetatable({}, { __mode = "k" })
+                waiting[short] = list
+                list[obj] = true
+            end
+        end
+    end
+end
+
 -- Sets text without our own hook seeing it. Protected so the hook can never stay switched off.
 local function SetQuiet(obj, text)
     busy = true
@@ -281,6 +327,51 @@ function Hide.Exempt(obj)
     exempt[obj] = true
 end
 
+function Hide.IsExempt(obj)
+    return exempt[obj] == true
+end
+
+-- Every text OnAir rewrote: what it said before and what OnAir put there. Much of the UI sets a
+-- name only when it changes (meters, lists, frames), so nothing would bring the real one back:
+-- when the broadcast ends, or a name or setting changes while live, the old text is put back
+-- here (and masked again with the new settings) without a reload. Text its owner set again
+-- since then is left alone.
+local before = setmetatable({}, { __mode = "k" })
+local wrote = setmetatable({}, { __mode = "k" })
+
+local function Rewrite(obj, old, text)
+    if wrote[obj] == nil then
+        before[obj] = old
+    end
+    wrote[obj] = text
+    SetQuiet(obj, text)
+end
+
+-- Its owner set new text: that's the text to put back from now on.
+local function Reclaimed(obj, text)
+    if wrote[obj] ~= nil and (IsSecret(text) or text ~= wrote[obj]) then
+        before[obj], wrote[obj] = nil, nil
+    end
+end
+
+local function PutBackOne(obj, text)
+    if Usable(obj) then
+        local now = obj:GetText()
+        if not IsSecret(now) and now == text then
+            SetQuiet(obj, before[obj])
+        end
+    end
+end
+
+-- One at a time, protected: an object some addon swapped out since can't stop the rest.
+local function PutBack()
+    for obj, text in pairs(wrote) do
+        pcall(PutBackOne, obj, text)
+    end
+    wipe(wrote)
+    wipe(before)
+end
+
 -- A meter's name label. Returns true when it was handled here.
 local function MeterLabel(fs, kind, text)
     if kind == "eui" then
@@ -291,16 +382,60 @@ local function MeterLabel(fs, kind, text)
         if plain then
             local out = Names.Scrub(text)
             if out ~= text then
-                SetQuiet(fs, out)
+                Rewrite(fs, text, out)
             end
             return true
         end
-        SetQuiet(fs, Names.Fill(OA.db.meterUnknown, 0))
+        Rewrite(fs, text, Names.Fill(OA.db.meterUnknown, 0))
         return true
     end
-    if (kind == "blizz" or kind == "details") and IsSecret(text) then
-        SetQuiet(fs, Names.Fill(OA.db.meterUnknown, 0))
-        return true
+    if kind == "blizz" or kind == "details" then
+        if IsSecret(text) then
+            Rewrite(fs, text, Names.Fill(OA.db.meterUnknown, 0))
+            return true
+        end
+        if type(text) == "string" and text ~= "" and Where("interface") then
+            local out = Names.Scrub(text)
+            if out ~= text then
+                Rewrite(fs, text, out)
+            end
+            return true
+        end
+    end
+    return false
+end
+
+local castTargets = setmetatable({}, { __mode = "k" })
+
+-- "always": a nameplate's cast target label (EllesmereUI, Plater). "secret": hidden only while it
+-- holds a secret value - other cast target labels (EllesmereUI cast bars and Mythic+ target bars)
+-- and DBM's big warnings, which carry hidden target names in instance combat.
+local SECRET_FRAMES = { "DBMWarning", "DBMSpecialWarning", "DBMInfoFrame" }
+
+local function IsCastTarget(fs)
+    local name = fs.GetName and fs:GetName()
+    local holder = fs:GetParent()
+    for depth = 1, 3 do
+        if not holder then
+            break
+        end
+        if holder.castTarget == fs or holder.CastTarget == fs then
+            return "always"
+        end
+        if holder.Target == fs or holder.target == fs then
+            return "secret"
+        end
+        if depth == 1 then
+            name = name or (holder.GetName and holder:GetName())
+        end
+        holder = holder:GetParent()
+    end
+    if type(name) == "string" then
+        for _, prefix in ipairs(SECRET_FRAMES) do
+            if name:find(prefix, 1, true) == 1 then
+                return "secret"
+            end
+        end
     end
     return false
 end
@@ -309,16 +444,39 @@ local function OnText(obj)
     if busy or not OA.live or exempt[obj] then
         return
     end
-    if obj.IsForbidden and obj:IsForbidden() then
+    -- Text boxes are left alone: changing their text can upset the box (focus, its own scripts),
+    -- and you can't move while one holds the keyboard.
+    if obj.GetObjectType and obj:GetObjectType() == "EditBox" then
+        return
+    end
+    if not Usable(obj) then
         return
     end
     local text = obj:GetText()
+    Reclaimed(obj, text)
     local label = npcLabel[obj]
     if label then
         if IsSecret(text) or text ~= label then
-            SetQuiet(obj, label)
+            Rewrite(obj, text, label)
         end
         return
+    end
+    -- A nameplate's cast target (EllesmereUI, Plater: a "castTarget" label next to the cast):
+    -- always someone in your group or you, and plates come and go from pools, so it's hidden
+    -- the moment it gets text, on any plate.
+    if Where("nameplates") then
+        local cast = castTargets[obj]
+        if cast == nil then
+            local ok, result = pcall(IsCastTarget, obj)
+            cast = ok and result or false
+            castTargets[obj] = cast
+        end
+        if cast == "always" then
+            Mute(obj, "tot", true)
+            return
+        elseif cast == "secret" then
+            Mute(obj, "secret", IsSecret(obj:GetText()))
+        end
     end
     if Where("meters") then
         local kind = meterKind[obj]
@@ -337,10 +495,20 @@ local function OnText(obj)
     if not Where("interface") or type(text) ~= "string" or IsSecret(text) or text == "" then
         return
     end
+    -- A note on a friend or guild member: emptied (it's put back when the broadcast ends).
+    if Names.IsNote(text) then
+        Rewrite(obj, text, "")
+        return
+    end
     local out = Names.Scrub(text)
     if out ~= text then
-        SetQuiet(obj, out)
+        Rewrite(obj, text, out)
+        -- It showed a player's name: any frame's, also other addons' (raid frames, meters). In
+        -- combat in an instance the game sends it names as secrets, which can't be replaced, so
+        -- from now on a secret here is hidden until readable text comes back.
+        guard[obj] = true
     end
+    Wait(obj, out)
     Remember(obj)
 end
 local GuardedText = Utils.Guard("text", OnText)
@@ -359,6 +527,7 @@ local function HookText()
     local buttonMeta = getmetatable(CreateFrame("Button")).__index
     hooksecurefunc(buttonMeta, "SetText", GuardedText)
     hooksecurefunc(buttonMeta, "SetFormattedText", GuardedText)
+
 end
 
 -- A new name came in: what's on screen may hold it already. Runs once per frame at most.
@@ -368,35 +537,42 @@ Hide.Rescrub = Utils.Debouncer(function()
     end
     for i = 1, RING_SIZE do
         local obj = ring[i]
-        if obj and not (obj.IsForbidden and obj:IsForbidden()) and obj:IsVisible() then
+        if obj and Usable(obj) and Visible(obj) then
             GuardedText(obj)
         end
     end
     if Hide.RefreshTooltip then
         Hide.RefreshTooltip()
     end
+    -- Older text that holds a name learned only now (a guild message set before the roster
+    -- arrived): exactly those labels, looked up by the word.
+    for _, word in ipairs(Names.TakeNewWords()) do
+        local holders = waiting[word]
+        if holders then
+            waiting[word] = nil
+            for obj in pairs(holders) do
+                if Usable(obj) then
+                    GuardedText(obj)
+                end
+            end
+        end
+    end
 end, 0.05)
 
 ---------------------------------------------------------------------------------------------- tooltips
 
 local function ScrubTooltip(tooltip)
-    if not Where("tooltips") or not tooltip or (tooltip.IsForbidden and tooltip:IsForbidden()) then
+    if not Where("tooltips") or not tooltip or not Usable(tooltip) then
         return
     end
-    local name = tooltip.GetName and tooltip:GetName()
-    if not name then
-        return
-    end
-    for i = 1, tooltip:NumLines() or 0 do
-        for _, side in ipairs({ "TextLeft", "TextRight" }) do
-            local fs = _G[name .. side .. i]
-            if fs then
-                local text = fs:GetText()
-                if type(text) == "string" and not IsSecret(text) and text ~= "" then
-                    local out = Names.Scrub(text)
-                    if out ~= text then
-                        SetQuiet(fs, out)
-                    end
+    -- Every line it holds: also the unnamed tooltips some addons make (Premade Groups Filter).
+    for _, fs in ipairs({ tooltip:GetRegions() }) do
+        if fs.GetObjectType and fs:GetObjectType() == "FontString" then
+            local text = fs:GetText()
+            if type(text) == "string" and not IsSecret(text) and text ~= "" then
+                local out = Names.Scrub(text)
+                if out ~= text then
+                    SetQuiet(fs, out)
                 end
             end
         end
@@ -410,6 +586,8 @@ local function OnUnitTooltip(tooltip)
     local ok, _, unit = pcall(tooltip.GetUnit, tooltip)
     if ok and type(unit) == "string" and not IsSecret(unit) then
         OA.Collect.Unit(unit)
+        -- The "Targeting:" line some tooltips add.
+        OA.Collect.Unit(unit .. "target")
         local mode = OA.db.npc.mode
         if mode ~= "real" and Where("tooltips") and SafeBool(UnitExists, unit)
             and not SafeBool(UnitPlayerControlled, unit) then
@@ -478,7 +656,7 @@ local function NameFor(fs, unit, alwaysHide)
     Mute(fs, "npc", mode == "hide")
     if mode == "generic" then
         npcLabel[fs] = Hide.NpcLabel(unit)
-        SetQuiet(fs, npcLabel[fs])
+        Rewrite(fs, fs:GetText(), npcLabel[fs])
     else
         npcLabel[fs] = nil
     end
@@ -578,7 +756,7 @@ function Hide.NamePlate(unit)
         return
     end
     local plate = C_NamePlate.GetNamePlateForUnit(unit)
-    if plate and not (plate.IsForbidden and plate:IsForbidden()) then
+    if plate and Usable(plate) then
         if plate.UnitFrame then
             UnitFrameNames(plate.UnitFrame, unit)
         end
@@ -605,6 +783,90 @@ function Hide.AllNamePlates()
     EllesmerePlates()
 end
 
+---------------------------------------------------------------------------------------------- meters on screen
+
+-- Meters already on screen: a row shows a name until it changes, so going live looks at every
+-- label once (Blizzard's meter and EllesmereUI's; Details! redraws its bars by itself).
+local function Sweep(frame, depth)
+    if not frame or depth > 9 or not Usable(frame) then
+        return
+    end
+    for _, region in ipairs({ frame:GetRegions() }) do
+        if region.GetObjectType and region:GetObjectType() == "FontString" then
+            GuardedText(region)
+        end
+    end
+    for _, child in ipairs({ frame:GetChildren() }) do
+        pcall(Sweep, child, depth + 1)
+    end
+end
+
+function Hide.Meters()
+    if not Where("meters") then
+        return
+    end
+    Sweep(_G.DamageMeter, 1)
+    for i = 1, 8 do
+        Sweep(_G["EllesmereUIDMFrame" .. i], 1)
+    end
+end
+
+-- The whole UI, once, closed windows too: much text is set before going live and never again
+-- (the friends window's BattleTag is set at login; raid frames, other addons' frames), so it
+-- would show real names until it changes. A few hundred frames per frame, so going live doesn't
+-- hitch.
+local queue = {}
+local sweeper = CreateFrame("Frame")
+local SWEEP_STEP = 300
+
+local function SweepFrame(frame)
+    if not Usable(frame) then
+        return
+    end
+    for _, region in ipairs({ frame:GetRegions() }) do
+        if region.GetObjectType and region:GetObjectType() == "FontString" then
+            GuardedText(region)
+        end
+    end
+    for _, child in ipairs({ frame:GetChildren() }) do
+        queue[#queue + 1] = child
+    end
+end
+
+local function SweepStep()
+    for _ = 1, SWEEP_STEP do
+        local frame = table.remove(queue)
+        if not frame or not OA.live then
+            wipe(queue)
+            sweeper:SetScript("OnUpdate", nil)
+            return
+        end
+        -- One frame at a time, protected: an odd frame can't stop the rest.
+        pcall(SweepFrame, frame)
+    end
+end
+
+function Hide.SweepUI()
+    if not OA.live then
+        return
+    end
+    wipe(queue)
+    queue[1] = UIParent
+    sweeper:SetScript("OnUpdate", Utils.Guard("sweep", SweepStep))
+end
+
+-- A name or a setting changed while live: the old text back, then masked again.
+function Hide.Redo()
+    PutBack()
+    if OA.live then
+        Hide.Meters()
+        Hide.SweepUI()
+        if Hide.RefreshTooltip then
+            Hide.RefreshTooltip()
+        end
+    end
+end
+
 ---------------------------------------------------------------------------------------------- start
 
 local hooksDone = false
@@ -616,7 +878,7 @@ local function HookFrames()
     hooksDone = true
     if type(CompactUnitFrame_UpdateName) == "function" then
         hooksecurefunc("CompactUnitFrame_UpdateName", Utils.Guard("raid frames", function(frame)
-            if OA.live and frame and frame.name and not (frame.IsForbidden and frame:IsForbidden()) then
+            if OA.live and frame and frame.name and Usable(frame) then
                 NameFor(frame.name, frame.displayedUnit or frame.unit)
             end
         end))
@@ -637,11 +899,14 @@ function Hide.Start()
     Hide.ApplyCVars()
     Hide.UnitFrames()
     Hide.AllNamePlates()
+    Utils.Guard("meters", Hide.Meters)()
+    Hide.SweepUI()
     -- EllesmereUI frames can spawn after us, and its unit frames cache names: ask for a repaint.
     C_Timer.After(2, function()
         if OA.live then
             Hide.UnitFrames()
             Hide.AllNamePlates()
+            Utils.Guard("meters", Hide.Meters)()
             if type(_G._EUF_RefreshUnitNames) == "function" then
                 pcall(_G._EUF_RefreshUnitNames)
             end
@@ -649,7 +914,13 @@ function Hide.Start()
     end)
 end
 
+-- Off the air: everything OnAir rewrote shows its own text again, no reload needed.
 function Hide.Stop()
+    wipe(queue)
+    sweeper:SetScript("OnUpdate", nil)
+    wipe(npcLabel)
+    wipe(waiting)
+    Utils.Guard("put back", PutBack)()
     Hide.RestoreCVars()
     Hide.UnmuteAll()
 end

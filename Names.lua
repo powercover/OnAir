@@ -41,6 +41,15 @@ local function WhoEnabled(kind)
     return db and db.who[WHO[kind] or kind] ~= false
 end
 
+-- Names learned since the last look (Hide fixes the text that holds them, nothing more).
+local newWords = {}
+
+function Names.TakeNewWords()
+    local list = newWords
+    newWords = {}
+    return list
+end
+
 local function Changed()
     wipe(cache)
     cacheSize = 0
@@ -232,6 +241,9 @@ local function PutWord(word, alias, rank)
     if words[word] and (wordRank[word] or 0) > rank then
         return false
     end
+    if words[word] == nil then
+        newWords[#newWords + 1] = word
+    end
     words[word] = alias
     wordRank[word] = rank
     return true
@@ -271,6 +283,9 @@ function Names.Add(first, second, kind, info)
     if Utils.IS_FOREVER and not second then
         local f, s = SplitFull(first)
         first, second = f, s
+    end
+    if second and not Utils.IS_FOREVER then
+        Names.AddRealm(second)
     end
     local key = MakeKey(first, second)
     local db = DB()
@@ -318,6 +333,67 @@ function Names.AliasOfFull(full)
     end
     local person = Names.AddFull(full, "other")
     return person and person.alias
+end
+
+-- For /onair check: is this a word OnAir replaces (a real name)?
+function Names.IsRealWord(word)
+    return IsPlain(word) and words[word] ~= nil
+end
+
+-- Every word that appears in some alias ("Star" in "The Star"): those aren't leaks.
+function Names.AliasWords()
+    local set = {}
+    for alias in pairs(used) do
+        for w in alias:gmatch("[^%s]+") do
+            set[w] = true
+        end
+    end
+    return set
+end
+
+-- Notes on friends, guild members and contacts: anything goes in them (real names too). A label
+-- whose whole text is a note is emptied while live; a note is never matched inside other text,
+-- so a short note like "tank" doesn't eat that word everywhere.
+local notes = {}
+
+local function NoteKey(text)
+    return (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+function Names.AddNote(text)
+    if IsPlain(text) then
+        local key = NoteKey(text)
+        if key ~= "" then
+            notes[key] = true
+        end
+    end
+end
+
+function Names.IsNote(text)
+    if not IsPlain(text) or not next(notes) then
+        return false
+    end
+    local key = NoteKey(text)
+    -- Also "Note: ..." and the like: a short label in front of the note.
+    return notes[key] == true or notes[key:match("^[^:]+:%s*(.+)$") or ""] == true
+end
+
+-- Multi-word names (guilds, BattleTags, communities) for /onair check.
+function Names.Phrases()
+    local list = {}
+    for _, phrase in ipairs(phrases) do
+        list[#list + 1] = phrase.text
+    end
+    return list
+end
+
+-- Does OnAir know this player ("Name-Realm" or "Name") without learning it now?
+function Names.Knows(full)
+    if not IsPlain(full) then
+        return false
+    end
+    local first, second = SplitFull(full)
+    return people[MakeKey(first, second)] ~= nil or words[full] ~= nil or (IsPlain(first) and words[first] ~= nil)
 end
 
 ---------------------------------------------------------------------------------------------- units
@@ -479,6 +555,13 @@ function Names.AddBNet(accountID, token, battleTag, characterFull)
     end
     if IsPlain(battleTag) then
         AddPhrase(battleTag, person.alias)
+        -- The name without "#1234" too, as a whole word: EllesmereUI's friends tooltip and others
+        -- show the BattleTag cut short ("DarkStriker (Character)").
+        local short = battleTag:match("^(.-)#%d+$")
+        if short and PutWord(short, person.alias, RANK.friend) then
+            AddAliasStart(person.alias)
+            Changed()
+        end
     end
     if IsPlain(characterFull) then
         Names.AddFull(characterFull, "friend", { forced = person.alias })
@@ -725,6 +808,61 @@ local function ScrubRaw(s)
 end
 
 -- The text with every known name replaced. Secret values come back untouched (unreadable).
+-- Realms OnAir has seen (yours, the connected ones, every learned player's). A "Name-Realm" or
+-- "Name (Realm)" with one of these is a player, even one OnAir never met: a Raider.IO search, an
+-- auction seller, a "sent by" line. It's learned on the spot and replaced like any other.
+local realms = {}
+
+local function RealmKey(realm)
+    return (realm:gsub("[%s'%-]", "")):lower()
+end
+
+function Names.AddRealm(realm)
+    if IsPlain(realm) and #realm >= 3 then
+        realms[RealmKey(realm)] = true
+    end
+end
+
+local function Capital(word)
+    local b = word:byte(1)
+    return b and ((b >= 65 and b <= 90) or b >= 195)
+end
+
+local function LearnStrangers(text)
+    if Utils.IS_FOREVER or not next(realms) then
+        return
+    end
+    if text:find("-", 1, true) then
+        for name, realm in text:gmatch("([%a\128-\255][%a\128-\255]+)%-([%a\128-\255][%a\128-\255']+)") do
+            if Capital(name) and realms[RealmKey(realm)] and not words[name .. "-" .. realm] then
+                Names.Add(name, realm, "other")
+            end
+        end
+    end
+    if text:find(" (", 1, true) then
+        for name, realm in text:gmatch("([%a\128-\255][%a\128-\255]+) %(([%a\128-\255][%a\128-\255' ]+)%)") do
+            if Capital(name) and realms[RealmKey(realm)] and not words[name] then
+                Names.Add(name, (realm:gsub("%s", "")), "other")
+            end
+        end
+    end
+end
+
+-- "Thrallbro…": a known name cut short to fit (WhisperMessenger, EllesmereUI) reads as its alias.
+local ELLIPSIS = "\226\128\166"
+
+local function Shortened(s)
+    return (s:gsub("([%a\128-\255][%w\128-\255]+)" .. ELLIPSIS, function(prefix)
+        if #prefix >= 3 and Capital(prefix) and not words[prefix] then
+            for word, alias in pairs(words) do
+                if #word > #prefix and word:sub(1, #prefix) == prefix then
+                    return alias
+                end
+            end
+        end
+    end))
+end
+
 function Names.Scrub(text)
     if type(text) ~= "string" or IsSecret(text) or text == "" then
         return text
@@ -733,9 +871,17 @@ function Names.Scrub(text)
     if hit then
         return hit
     end
+    LearnStrangers(text)
+    hit = cache[text]
+    if hit then
+        return hit
+    end
     local out = text
     if text:find("[%a\128-\255|]") then
         out = ScrubRaw(text)
+        if out:find(ELLIPSIS, 1, true) then
+            out = Shortened(out)
+        end
     end
     if cacheSize >= CACHE_LIMIT then
         wipe(cache)
@@ -812,6 +958,16 @@ end
 
 function Names.Init()
     RebuildCustom()
+    if not Utils.IS_FOREVER then
+        Names.AddRealm(GetRealmName and GetRealmName())
+        Names.AddRealm(GetNormalizedRealmName and GetNormalizedRealmName())
+        if type(GetAutoCompleteRealms) == "function" then
+            local ok, list = pcall(GetAutoCompleteRealms)
+            for _, realm in ipairs(ok and type(list) == "table" and list or {}) do
+                Names.AddRealm(realm)
+            end
+        end
+    end
     for _, alias in pairs(DB().assigned) do
         used[alias] = true
     end

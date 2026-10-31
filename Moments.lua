@@ -513,7 +513,7 @@ function Moments.ShowExport(title, text)
         f.title:SetPoint("TOPLEFT", 18, -16)
         local hint = Kit.Text(f, 12, C.muted)
         hint:SetPoint("TOPLEFT", f.title, "BOTTOMLEFT", 0, -6)
-        hint:SetText(L["Selected: press Ctrl+C to copy."])
+        hint:SetText(L["Click the text, then press Ctrl+C to copy."])
         local close = Kit.IconButton(f, "Close", 28, nil, nil, function() f:Hide() end)
         close:SetPoint("TOPRIGHT", -10, -10)
         local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
@@ -525,7 +525,14 @@ function Moments.ShowExport(title, text)
         box:SetFontObject(Kit.Font(13))
         box:SetTextColor(unpack(C.text))
         box:SetWidth(450)
-        box:SetScript("OnEscapePressed", function() f:Hide() end)
+        box:SetScript("OnEscapePressed", function(self)
+            self:ClearFocus()
+            f:Hide()
+        end)
+        -- The text is selected for copying only when you click into it: the window never takes
+        -- the keyboard by itself (you keep moving while it's open).
+        box:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+        f:SetScript("OnHide", function() box:ClearFocus() end)
         box:SetScript("OnTextChanged", function(self, user)
             if user then
                 self:SetText(f.text or "")
@@ -541,8 +548,6 @@ function Moments.ShowExport(title, text)
     exportFrame.text = text
     exportFrame.box:SetText(text)
     exportFrame:Show()
-    exportFrame.box:SetFocus()
-    exportFrame.box:HighlightText()
 end
 
 function Moments.OnGoLive(atLogin)

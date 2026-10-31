@@ -125,19 +125,6 @@ function OA.GoLive()
     end
 end
 
-StaticPopupDialogs["ONAIR_RELOAD"] = {
-    text = L["Off the air. Real names come back in new text right away; a reload brings them back everywhere."],
-    button1 = L["Reload now"],
-    button2 = L["Later"],
-    OnAccept = function()
-        ReloadUI()
-    end,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
-
 function OA.EndLive()
     if not OA.live then
         return
@@ -159,7 +146,6 @@ function OA.EndLive()
     if OA.db.toast and OA.UI and OA.UI.Toast then
         OA.UI.Toast(false)
     end
-    StaticPopup_Show("ONAIR_RELOAD")
 end
 
 function OA.Toggle()
@@ -186,7 +172,7 @@ end
 function OA.NamesChanged(reshuffle)
     Names.Rebuild(reshuffle)
     if OA.live then
-        OA.Hide.Rescrub()
+        OA.Hide.Redo()
     end
     if OA.UI and OA.UI.Refresh then
         OA.UI.Refresh()
@@ -280,6 +266,8 @@ SlashCmdList.ONAIR = function(input)
     elseif command == "camera" then
         OA.UI.ShowConsole()
         OA.UI.ShowPage("camera", true)
+    elseif command == "check" then
+        OA.Check.Run()
     elseif command == "reshuffle" then
         OA.NamesChanged(true)
         Utils.Print(L["Everyone drew a new name."])

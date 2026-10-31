@@ -679,6 +679,8 @@ function skin.Slider(parent, spec, width)
         row:GetScript("OnLeave")(row)
         Keys(false)
     end)
+    -- Hidden under the mouse (console closed, skin switched, panel gone): let go of the keyboard.
+    scale:SetScript("OnHide", function() Keys(false) end)
     scale:SetScript("OnKeyDown", function(self, key)
         local delta = (key == "RIGHT" or key == "UP") and 1 or ((key == "LEFT" or key == "DOWN") and -1 or 0)
         local canStop = not InCombatLockdown() and self.SetPropagateKeyboardInput
@@ -692,6 +694,14 @@ function skin.Slider(parent, spec, width)
             self:SetPropagateKeyboardInput(false)
         end
         Apply((spec.get() or min) + delta * step * (IsShiftKeyDown() and 5 or 1))
+        -- Only this key press is kept from the game: the next ones go through again.
+        if canStop then
+            C_Timer.After(0, function()
+                if not InCombatLockdown() then
+                    self:SetPropagateKeyboardInput(true)
+                end
+            end)
+        end
     end)
     scale:SetScript("OnSizeChanged", function()
         Paint(Snap(spec.get() or min))

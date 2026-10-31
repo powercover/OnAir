@@ -16,7 +16,9 @@ Utils.lua
 Cast.lua
 Names.lua
 Collect.lua
+Archives.lua
 Hide.lua
+Check.lua
 Chat.lua
 Camera.lua
 UIKit.lua

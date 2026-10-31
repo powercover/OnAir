@@ -68,9 +68,23 @@ function Collect.GuildRoster()
     end
     local total = GetNumGuildMembers() or 0
     for i = 1, math.min(total, 2000) do
-        local name = Call(GetGuildRosterInfo, i)
+        local name, _, _, _, _, _, publicNote, officerNote = Call(GetGuildRosterInfo, i)
+        Names.AddNote(publicNote)
+        Names.AddNote(officerNote)
         Names.AddFull(name, "other")
     end
+end
+
+-- A friend's game account: its WoW character as "Name-Realm" (or "First Surname"), if any.
+local function Character(game)
+    if not game or not IsPlain(game.characterName) then
+        return nil
+    end
+    local character = game.characterName
+    if IsPlain(game.realmName) and not Utils.IS_FOREVER then
+        character = character .. "-" .. game.realmName:gsub("%s", "")
+    end
+    return character
 end
 
 function Collect.Friends()
@@ -80,6 +94,7 @@ function Collect.Friends()
             local info = Call(FL.GetFriendInfoByIndex, i)
             if info then
                 Names.AddFull(info.name, "other")
+                Names.AddNote(info.notes)
             end
         end
     end
@@ -93,17 +108,44 @@ function Collect.Friends()
         for i = 1, (Call(BNGetNumFriends) or 0) do
             local account = Call(BN.GetFriendAccountInfo, i)
             if account then
-                local game = account.gameAccountInfo
-                local character
-                if game and IsPlain(game.characterName) then
-                    character = game.characterName
-                    if IsPlain(game.realmName) and not Utils.IS_FOREVER then
-                        character = character .. "-" .. game.realmName:gsub("%s", "")
+                Names.AddBNet(account.bnetAccountID, account.accountName, account.battleTag, Character(account.gameAccountInfo))
+                Names.AddNote(account.note)
+                -- Every game account, not only the "main" one: with the Battle.net app open, the
+                -- app can be the main one and the WoW character would never be learned.
+                for g = 1, (BN.GetFriendNumGameAccounts and Call(BN.GetFriendNumGameAccounts, i) or 0) or 0 do
+                    local character = Character(Call(BN.GetFriendGameAccountInfo, i, g))
+                    if character then
+                        Names.AddBNet(account.bnetAccountID, account.accountName, account.battleTag, character)
                     end
                 end
-                Names.AddBNet(account.bnetAccountID, account.accountName, account.battleTag, character)
             end
         end
+    end
+end
+
+-- Recent allies (the friends window's Recent tab): people you raided with, whispered, grouped with.
+local function AllyName(ally)
+    local data = type(ally) == "table" and (ally.characterData or ally) or nil
+    if not data then
+        return nil
+    end
+    if IsPlain(data.fullName) then
+        return data.fullName
+    end
+    if IsPlain(data.name) and IsPlain(data.realmName) and not Utils.IS_FOREVER then
+        return data.name .. "-" .. data.realmName:gsub("%s", "")
+    end
+    return data.name
+end
+Collect.AllyName = AllyName
+
+function Collect.RecentAllies()
+    local RA = C_RecentAllies
+    if not (RA and RA.GetRecentAllies) then
+        return
+    end
+    for _, ally in ipairs(Call(RA.GetRecentAllies) or {}) do
+        Names.AddFull(AllyName(ally), "other")
     end
 end
 
@@ -139,6 +181,10 @@ function Collect.Clubs()
         local members = Call(Club.GetClubMembers, club.clubId) or {}
         for i = 1, math.min(#members, 2000) do
             local info = Call(Club.GetMemberInfo, club.clubId, members[i])
+            if info then
+                Names.AddNote(info.memberNote)
+                Names.AddNote(info.officerNote)
+            end
             if info and not info.isSelf then
                 Names.AddFull(info.name, "other")
             end
@@ -176,6 +222,25 @@ function Collect.Who()
     end
 end
 
+-- A group finder listing: its leader and, where the game tells, every member (addons like
+-- Premade Groups Filter and Raider.IO show them all).
+local function LearnListing(id)
+    local LFG = C_LFGList
+    local info = Call(LFG.GetSearchResultInfo, id)
+    if not info then
+        return
+    end
+    Names.AddFull(info.leaderName, "other")
+    if LFG.GetSearchResultPlayerInfo then
+        for i = 1, info.numMembers or 0 do
+            local player = Call(LFG.GetSearchResultPlayerInfo, id, i)
+            if type(player) == "table" then
+                Names.AddFull(player.name, "other")
+            end
+        end
+    end
+end
+
 function Collect.LFG()
     local LFG = C_LFGList
     if not (LFG and LFG.GetSearchResults) then
@@ -183,12 +248,15 @@ function Collect.LFG()
     end
     local _, results = Call(LFG.GetSearchResults)
     for _, id in ipairs(results or {}) do
-        local info = Call(LFG.GetSearchResultInfo, id)
-        if info then
-            Names.AddFull(info.leaderName, "other")
-        end
+        LearnListing(id)
     end
     Collect.Applicants()
+end
+
+function Collect.Listing(id)
+    if C_LFGList and C_LFGList.GetSearchResultInfo and id then
+        LearnListing(id)
+    end
 end
 
 function Collect.Applicants()
@@ -244,6 +312,11 @@ function Collect.All()
     Collect.Friends()
     Collect.Clubs()
     Collect.Mail()
+    -- Group finder listings already on screen (and applicants): no new event comes for them.
+    Collect.LFG()
+    Collect.RecentAllies()
+    -- Names only other addons' saved data holds (alts, past groups, whisper contacts).
+    OA.Archives.Read()
     for _, plate in ipairs(C_NamePlate.GetNamePlates() or {}) do
         if plate.namePlateUnitToken then
             Collect.Unit(plate.namePlateUnitToken)
@@ -272,7 +345,20 @@ local HANDLERS = {
     CLUB_MEMBERS_UPDATED = Collect.Clubs,
     CLUB_MEMBER_ADDED = Collect.Clubs,
     WHO_LIST_UPDATE = Collect.Who,
+    -- Whisper senders, from the event itself: a whisper addon may take the line out of chat
+    -- before OnAir's chat filter ever sees it.
+    CHAT_MSG_WHISPER = function(_, author) Names.AddFull(author, "other") end,
+    CHAT_MSG_BN_WHISPER = function(...)
+        local id = select(13, ...)
+        if id then
+            Collect.BNetAccount(id)
+        end
+    end,
+    RECENT_ALLIES_CACHE_UPDATE = Collect.RecentAllies,
+    RECENT_ALLY_DATA_UPDATED = Collect.RecentAllies,
+    RECENT_ALLIES_DATA_READY = Collect.RecentAllies,
     LFG_LIST_SEARCH_RESULTS_RECEIVED = Collect.LFG,
+    LFG_LIST_SEARCH_RESULT_UPDATED = function(id) Collect.Listing(id) end,
     LFG_LIST_APPLICANT_LIST_UPDATED = Collect.Applicants,
     LFG_LIST_APPLICANT_UPDATED = Collect.Applicants,
     MAIL_INBOX_UPDATE = Collect.Mail,

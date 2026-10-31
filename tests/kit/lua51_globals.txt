@@ -15,6 +15,7 @@ C_Item
 C_LFGList
 C_NamePlate
 C_PvP
+C_RecentAllies
 C_Timer
 CancelDuel
 CancelTrade
@@ -34,6 +35,7 @@ EnumerateFrames
 GameTooltip
 GameTooltip_Hide
 GetAchievementInfo
+GetAutoCompleteRealms
 GetBattlefieldArenaFaction
 GetBuildInfo
 GetCursorPosition
@@ -44,10 +46,13 @@ GetInboxNumItems
 GetLocale
 GetMinimapShape
 GetMinimapZoneText
+GetMouseFoci
+GetMouseFocus
 GetNormalizedRealmName
 GetNumBattlefieldScores
 GetNumGuildMembers
 GetRealZoneText
+GetRealmName
 GetSubZoneText
 GetTime
 GetZoneText
@@ -55,15 +60,14 @@ InCombatLockdown
 IsGuildMember
 IsInGuild
 IsInRaid
+IsMouseButtonDown
+IsMouselooking
 IsShiftKeyDown
 Menu
 Minimap
-MoveViewLeftStart
-MoveViewLeftStop
 OnAirDB
 PartyMemberFrameMixin
 PlaySound
-ReloadUI
 SOUNDKIT
 STANDARD_TEXT_FONT
 Screenshot
@@ -71,9 +75,7 @@ SendChatMessage
 SetItemRef
 SetUIVisibility
 SlashCmdList
-StaticPopupDialogs
 StaticPopup_Hide
-StaticPopup_Show
 TooltipDataProcessor
 UIErrorsFrame
 UIParent
@@ -116,7 +118,3 @@ tostring
 type
 unpack
 wipe
-GetMouseFoci
-GetMouseFocus
-IsMouseButtonDown
-IsMouselooking

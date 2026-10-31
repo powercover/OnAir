@@ -493,7 +493,7 @@ local function BuildHide()
         { "UnitFrame", L["Interface text"], L["Unit & raid frames, character, friends, guild, LFG, mail."], "interface" },
     }, db.where)
 
-    P.Note(L["Changes apply right away. Turning something off brings real names back in new text; a reload brings them back everywhere."])
+    P.Note(L["Changes apply right away, also while live. Ending the broadcast brings every real name back, no reload needed. Chat lines written while live keep their aliases."])
     P.Finish()
 end
 
@@ -952,7 +952,7 @@ local function BuildAbout()
     tag:SetText(L["Streamer & recording mode for World of Warcraft."])
 
     P.Heading(L["Commands"])
-    P.Note(L["/onair  open this console\n/onair live  go live\n/onair off  end the broadcast\n/onair mark [note]  mark a moment\n/onair orbit  camera orbit on / off\n/onair camera  the camera page\n/onair preview  preview on / off\n/onair layout  edit the layout\n/onair reshuffle  everyone draws a new name\nKey bindings: Esc > Options > Keybindings > OnAir"], true)
+    P.Note(L["/onair  open this console\n/onair live  go live\n/onair off  end the broadcast\n/onair mark [note]  mark a moment\n/onair orbit  camera orbit on / off\n/onair camera  the camera page\n/onair preview  preview on / off\n/onair layout  edit the layout\n/onair reshuffle  everyone draws a new name\n/onair check  look for real names still on screen\nKey bindings: Esc > Options > Keybindings > OnAir"], true)
     P.Heading(L["How it works"])
     P.Note(L["OnAir learns every player your UI can show (group, targets, nameplates, chat, friends, guild, communities, group finder, mail) and swaps their names for aliases in all text, including other addons'. Names you see stay the same every session."], true)
     P.Heading(L["What the game doesn't allow"])

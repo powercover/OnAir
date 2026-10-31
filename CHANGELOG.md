@@ -41,6 +41,27 @@
   - Studio: the plain console with tiles and switches.
   The banner, the go-live slate, the stream chat's title bar and edit layout follow the skin. On a
   viewfinder the thirds lines are snap guides too.
+- No reloads: ending the broadcast puts every real name back right away (the reload prompt is gone),
+  and changing a name or a Hide setting while live re-masks what's on screen.
+- Going live masks what's already on screen too (open windows, raid frames, other addons' frames,
+  damage meter rows), not only text that changes afterwards.
+- /onair check: looks for leaks in the game itself. Real names still on screen (closed windows too)
+  while live or in a preview, and players the game shows that OnAir hasn't learned (or that the game
+  hides). Names in the report are partly masked.
+- Also covered: Battle.net friends' characters when the Battle.net app is their main account, group
+  finder members (Premade Groups Filter, Raider.IO), unnamed addon tooltips, your BattleTag in the
+  friends window, and other addons' raid frames and meters in instance combat.
+- An audit of the installed addons' code (EllesmereUI, DBM, Raider.IO, Premade Groups Filter, M+ logs,
+  MPlusCoach, AlterEgo, PrioWarband, Syndicator, Narcissus, WhisperMessenger, Leatrix and more) and
+  the fixes from it:
+  - Names only other addons keep are learned when going live: your alts, past key groups, whisper
+    contacts from past sessions, names in EllesmereUI's saved chat.
+  - A "Name-Realm" or "Name (Realm)" with a known realm is a player even if OnAir never met them
+    (Raider.IO searches, DBM "sent by", auction sellers).
+  - Names cut short with "..." read as their alias.
+  - Hidden while secret in instance combat: cast bar targets, Mythic+ target bars, DBM's big warnings.
+  - Nameplate cast targets on plates made later from a pool; whisper senders even when a whisper
+    addon takes the line; the target of whoever you mouse over; recent allies.
 - OnAir Mono: OnAir's own pixel font for timecodes and camera text (Latin letters with accents).
 - Deck quick panels: rest the mouse on a button for a second for its settings on the fly: clock,
   preview and stream chat; camera mode, preset, zoom, field of view, shoulder; orbit direction, speed
