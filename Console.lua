@@ -354,13 +354,13 @@ local function BuildBroadcast()
 
     P.Heading(L["What viewers see"], L["Real names are never shown here, so it's safe to open the console on stream."])
     P.Custom(P.skin.Table(P.body, P.width, {
-        { icon = "Me", text = L["You"], value = function() return Names.MeAlias() end },
+        { icon = "Me", text = L["You"], value = function() return Names.MyAlias() end },
         { icon = "Group", text = L["Party member"], value = function() return Names.Sample("crew", 1, "crew:a") end },
         { icon = "Group", text = L["Party member"], value = function() return Names.Sample("crew", 2, "crew:b") end },
         { icon = "Social", text = L["Stranger"], value = function() return Names.Sample("others", 1, "other:a") end },
         { icon = "Guild", text = L["Your guild"], value = function() return Names.Fill(OA.db.guildAlias, 0) end },
         { icon = "Pet", text = L["Your pet"], value = function()
-            return (OA.db.petTemplate:gsub("{owner}", Names.MeAlias()))
+            return (OA.db.petTemplate:gsub("{owner}", function() return Names.MyAlias() end))
         end },
     }, P.OnRefresh), 24)
 

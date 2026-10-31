@@ -327,7 +327,7 @@ function Stream.TogglePlacing()
         window:Show()
         smf:Clear()
         smf:AddMessage(L["Drag the top bar to move, the corner to resize."], 1, 1, 1)
-        smf:AddMessage(string.format(L["%s says: Welcome, %s!"], L["Innkeeper Allison"], Names.MeAlias()), Color("MONSTER_SAY"))
+        smf:AddMessage(string.format(L["%s says: Welcome, %s!"], L["Innkeeper Allison"], Names.MyAlias()), Color("MONSTER_SAY"))
         smf:AddMessage(L["You receive loot: [Linen Cloth]x2."], Color("LOOT"))
     end
     Stream.Update()

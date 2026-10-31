@@ -569,8 +569,9 @@ end
 
 -- Who a meter row stands for when its name is secret (combat). The row's own data says if it's you
 -- (isLocalPlayer is never secret), and class + spec icon are never secret either: out of combat,
--- when names are readable, each player's class + spec is remembered with their alias, so in
--- combat a row with a unique class + spec gets the same alias. Two players alike: no guess.
+-- when names are readable, each player's class + spec is remembered with their name, so in combat
+-- a row with a unique class + spec gets that name's alias (the alias of the moment: a reshuffle or
+-- a new fixed alias shows at once). Two players alike: no guess.
 local bySpec = {}
 
 -- The data behind a meter row: EllesmereUI keeps it in bar._src, Blizzard on the entry itself.
@@ -745,11 +746,11 @@ local function RowKey(fs)
     return ok and key or nil
 end
 
-local function RememberRow(fs, alias)
+local function RememberRow(fs, name)
     local key = RowKey(fs)
     if key then
-        if bySpec[key] == nil or bySpec[key] == alias then
-            bySpec[key] = alias
+        if bySpec[key] == nil or bySpec[key] == name then
+            bySpec[key] = name
         else
             bySpec[key] = false
         end
@@ -758,7 +759,7 @@ end
 
 -- A meter fills a row's name before it attaches the row's data (EllesmereUI sets bar._src after
 -- the label), so the row is looked at again a frame later, when the data is there. One list and
--- one frame for all rows: no timer per redraw. remember[fs] = the alias it showed (plain name);
+-- one frame for all rows: no timer per redraw. remember[fs] = the name it showed (plain);
 -- recheck[fs] = what OnAir put there (secret name).
 local remember, recheck, recheckText = setmetatable({}, WEAK), setmetatable({}, WEAK), setmetatable({}, WEAK)
 local laterFrame = CreateFrame("Frame")
@@ -772,8 +773,8 @@ local function RunLater()
         wipe(recheckText)
         return
     end
-    for fs, alias in pairs(remember) do
-        RememberRow(fs, alias)
+    for fs, name in pairs(remember) do
+        RememberRow(fs, name)
     end
     for fs, shown in pairs(recheck) do
         local alias = RowAlias(fs) or Names.Fill(OA.db.meterUnknown, 0)
@@ -797,16 +798,16 @@ RowAlias = function(fs)
     if src then
         local own = src.isLocalPlayer
         if own ~= nil and not IsSecret(own) and own == true then
-            return Names.MeAlias()
+            return Names.MyAlias()
         end
     end
     local key = RowKey(fs)
     local known = key and bySpec[key]
     if known ~= nil then
-        return known or nil
+        return known and Names.Scrub(known) or nil
     end
     local ok, mine = pcall(MyIcon, fs)
-    return ok and mine and Names.MeAlias() or nil
+    return ok and mine and Names.MyAlias() or nil
 end
 
 -- A row whose name is secret: who it is from the row's data right away (a meter redraws its rows
@@ -830,7 +831,7 @@ local function MeterLabel(fs, kind, text)
             local out = Names.Scrub(text)
             if out ~= text then
                 Rewrite(fs, text, out)
-                remember[fs] = out
+                remember[fs] = text
                 Later()
             end
             -- A name OnAir learns only later (the group's roster after the row): fixed then.
@@ -849,7 +850,7 @@ local function MeterLabel(fs, kind, text)
             local out = Names.Scrub(text)
             if out ~= text then
                 Rewrite(fs, text, out)
-                remember[fs] = out
+                remember[fs] = text
                 Later()
             end
             -- A name OnAir learns only later (the group's roster after the row): fixed then.
@@ -892,7 +893,7 @@ local function CasterTargetAlias(fs)
         return nil
     end
     if SafeBool(UnitIsUnit, target, "player") then
-        return Names.MeAlias()
+        return Names.MyAlias()
     end
     for i = 2, #GROUP do
         local member = GROUP[i]

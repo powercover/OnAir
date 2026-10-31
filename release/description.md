@@ -14,6 +14,7 @@ For **Retail** and **WoW Forever**. One addon, no libraries.
 
 - **Aliases, not blanks.** Your viewers can still follow the action. Every player gets an alias, and the same player keeps the same alias every session.
 - **Everywhere at once.** Chat, nameplates, unit and raid frames, tooltips, damage meters, and the friends, guild, group finder and mail windows. Other addons' text too.
+- **Works with your addons.** Tested with popular UI and quality-of-life addons (see below). OnAir swaps names in the text any addon shows, so it doesn't need a list of supported addons.
 - **Even in combat.** Where the game hides names from addons (combat, dungeons), OnAir covers that text instead.
 - **Back to normal in one click.** End the broadcast and every real name returns at once. The game settings OnAir changed come back as you had them.
 - **It checks itself.** `/onair check` looks for any real name still on your screen.
@@ -65,6 +66,19 @@ Pick a look: a **camera viewfinder**, a **vision mixer**, a **film slate** or a 
 The game draws names above heads itself, and addons can't change that text. While live, OnAir shows friendly players as name-only nameplates, which read their aliases.
 
 For full cover, turn on **Blank name font** (Hide page): no name above any head, players or NPCs, live or not. The game reads this font only when you log in, so it needs a logout to switch on or off. Friendly NPC nameplates bring NPC names back.
+
+## Works with your addons
+
+OnAir doesn't patch addons one by one. It swaps names in the text itself, wherever it shows, so other addons' windows, frames and tooltips are covered too.
+
+It was built and tested alongside popular UI and quality-of-life addons, and checked against their code:
+
+- **EllesmereUI**: unit frames, nameplates, damage meters (also in combat), friends and chat.
+- **Deadly Boss Mods**: warnings and "sent by" lines.
+- **Raider.IO** and **Premade Groups Filter**: group finder lists and searches.
+- **Leatrix Plus**, **Narcissus**, **Syndicator**, **WhisperMessenger**, **AlterEgo**: names they show or keep from earlier sessions.
+
+Names that only other addons remember (your alts, past key groups, whisper contacts) are learned when you go live, so they're covered from the first second. Found a name that slips through? `/onair check` shows where it is.
 
 ## What the game doesn't allow
 

@@ -240,6 +240,21 @@ local function CustomFor(person)
     return customLower[key] or customLower[person.first:lower()]
 end
 
+-- What the character you play now is called: its fixed alias (Custom page) if it has one, else your
+-- stage name, the same as wherever its name is swapped. For what names you without your name in it:
+-- your damage meter row while names are secret, a cast aimed at you.
+function Names.MyAlias()
+    local ok, first, second = pcall(UnitName, "player")
+    if ok and IsPlain(first) then
+        local key = MakeKey(first, IsPlain(second) and second or nil)
+        local custom = customLower[key:lower()] or customLower[first:lower()]
+        if custom then
+            return custom
+        end
+    end
+    return MeAlias()
+end
+
 local function AliasFor(person)
     local db = DB()
     local custom = CustomFor(person)

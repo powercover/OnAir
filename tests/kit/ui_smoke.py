@@ -835,11 +835,28 @@ local midRedraw = mine:GetText() == OA.Names.MeAlias()
 run(0.05)
 METER_ALIAS_OK = midRedraw and mine:GetText() == OA.Names.MeAlias() and bobAlias ~= "Bob" and other:GetText() == bobAlias
 -- a group member's row named before OnAir learned them (the roster came after): masked then
+-- (another spec than Bob's: two players alike would make neither row known)
 local late = Row()
-Fill(late, "Xoulate", 135940)
+Fill(late, "Xoulate", 135770)
 OA.Names.AddFull("Xoulate-Kazzak", "crew")
 run(0.2)
 METER_ALIAS_OK = METER_ALIAS_OK and not late:GetText():find("Xoulate")
+-- fixed aliases set mid-fight (Custom page): your row and a remembered player's read them at the
+-- next redraw, as their names do everywhere else; taken off, the aliases from before come back
+OA.db.custom.Me, OA.db.custom.Bob = "Hello World", "Duo Partner"
+OA.NamesChanged(false)
+mine:SetText({ __secret = true })
+other:SetText({ __secret = true })
+run(0.05)
+local customRows = mine:GetText() == "Hello World" and other:GetText() == "Duo Partner"
+METER_DBG = tostring(METER_ALIAS_OK) .. " | custom: " .. tostring(mine:GetText()) .. " / " .. tostring(other:GetText())
+OA.db.custom.Me, OA.db.custom.Bob = nil, nil
+OA.NamesChanged(false)
+mine:SetText({ __secret = true })
+other:SetText({ __secret = true })
+run(0.05)
+METER_DBG = METER_DBG .. " | after: " .. tostring(mine:GetText()) .. " / " .. tostring(other:GetText()) .. " (bob was " .. tostring(bobAlias) .. ")"
+METER_ALIAS_OK = METER_ALIAS_OK and customRows and mine:GetText() == OA.Names.MeAlias() and other:GetText() == bobAlias
 OA.EndLive()
 -- ending live: a label that keeps reporting hidden text still gets its name back
 local stuck = Row()
@@ -1113,7 +1130,7 @@ def run(toc, look="viewfinder"):
                               "SNAP_FREE", "DONE_OK", "SNAP_RIGHT_CENTER", "SNAP_PIECE",
                               "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS",
                               "SNAP_MODES", "LIVE_DRAG", "FIRST_EDIT", "PANELS_OPENED",
-                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
+                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "METER_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
 
 
 # One login (or /reload) with the blank name font: what the game's name fonts hold after OnAir's
