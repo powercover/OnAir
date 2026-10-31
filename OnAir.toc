@@ -4,6 +4,8 @@
 ## Author: powercover
 ## Version: 1.0.0
 ## X-License: All Rights Reserved
+## X-Curse-Project-ID: 1776602
+## X-Wago-ID: qGYB4vNg
 ## SavedVariables: OnAirDB
 ## Category: Audio & Video
 ## IconTexture: Interface\AddOns\OnAir\Media\Logo
