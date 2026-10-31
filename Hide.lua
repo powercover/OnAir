@@ -136,10 +136,18 @@ local function Mute(fs, reason, on)
     if not hooked[fs] then
         hooked[fs] = true
         hooksecurefunc(fs, "SetAlpha", function(self, alpha)
-            if Hidden(self) and alpha ~= 0 and not IsSecret(alpha) then
+            if Hidden(self) and (IsSecret(alpha) or alpha ~= 0) then
                 pcall(self.SetAlpha, self, 0)
             end
         end)
+        -- Midnight's other way to show a region: also held at 0 while hidden.
+        if fs.SetAlphaFromBoolean then
+            hooksecurefunc(fs, "SetAlphaFromBoolean", function(self)
+                if Hidden(self) then
+                    pcall(self.SetAlpha, self, 0)
+                end
+            end)
+        end
     end
     local was = Hidden(fs)
     local set = reasons[fs]
@@ -151,10 +159,11 @@ local function Mute(fs, reason, on)
         set[reason] = nil
     end
     local now = Hidden(fs)
-    if now and not was then
-        fs:SetAlpha(0)
-    elseif was and not now then
-        fs:SetAlpha(1)
+    -- Every time, not only when it first gets hidden: its owner may have shown it another way.
+    if now then
+        pcall(fs.SetAlpha, fs, 0)
+    elseif was then
+        pcall(fs.SetAlpha, fs, 1)
     end
 end
 Hide.Mute = Mute
@@ -331,6 +340,7 @@ function Hide.IsExempt(obj)
     return exempt[obj] == true
 end
 
+
 -- Every text OnAir rewrote: what it said before and what OnAir put there. Much of the UI sets a
 -- name only when it changes (meters, lists, frames), so nothing would bring the real one back:
 -- when the broadcast ends, or a name or setting changes while live, the old text is put back
@@ -380,6 +390,7 @@ local function MeterLabel(fs, kind, text)
         end
         local plain = type(text) == "string" and not IsSecret(text)
         if plain then
+            Mute(fs, "secret", false)
             local out = Names.Scrub(text)
             if out ~= text then
                 Rewrite(fs, text, out)
@@ -387,11 +398,14 @@ local function MeterLabel(fs, kind, text)
             return true
         end
         Rewrite(fs, text, Names.Fill(OA.db.meterUnknown, 0))
+        Mute(fs, "secret", IsSecret(fs:GetText()))
         return true
     end
     if kind == "blizz" or kind == "details" then
         if IsSecret(text) then
             Rewrite(fs, text, Names.Fill(OA.db.meterUnknown, 0))
+            -- If the label wouldn't take other text, it's hidden instead.
+            Mute(fs, "secret", IsSecret(fs:GetText()))
             return true
         end
         if type(text) == "string" and text ~= "" and Where("interface") then
@@ -930,4 +944,23 @@ function Hide.OnUnitChanged()
     if OA.live then
         Hide.UnitFrames()
     end
+end
+
+-- For /onair check: what OnAir thinks of a label (to see why one wasn't hidden).
+function Hide.Explain(obj)
+    local parts = {}
+    local cast = castTargets[obj]
+    if cast ~= nil then
+        parts[#parts + 1] = "cast=" .. tostring(cast)
+    end
+    if guard[obj] then
+        parts[#parts + 1] = "watched"
+    end
+    for reason in pairs(reasons[obj] or {}) do
+        parts[#parts + 1] = "muted:" .. reason
+    end
+    if meterKind[obj] then
+        parts[#parts + 1] = "meter=" .. tostring(meterKind[obj])
+    end
+    return #parts > 0 and table.concat(parts, " ") or "untouched"
 end

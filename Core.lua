@@ -268,6 +268,8 @@ SlashCmdList.ONAIR = function(input)
         OA.UI.ShowPage("camera", true)
     elseif command == "check" then
         OA.Check.Run()
+    elseif command:find("^check %d+$") then
+        OA.Check.Later(math.min(30, tonumber(command:match("%d+"))))
     elseif command == "reshuffle" then
         OA.NamesChanged(true)
         Utils.Print(L["Everyone drew a new name."])
