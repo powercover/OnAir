@@ -29,9 +29,12 @@ BG_TOP, BG_BOTTOM = (15, 16, 19), (24, 25, 30)
 RED, TEXT, MUTED = (255, 59, 48), (240, 241, 244), (160, 165, 176)
 SKINS = (("viewfinder", "Viewfinder"), ("mixer", "Vision mixer"), ("slate", "Film slate"), ("studio", "Studio"))
 
-# An hour live, for the Moments card (texts as OnAir writes them; names already aliases).
+# An hour live, for the Moments card (texts as OnAir writes them; names already aliases). The clock
+# is fixed, so the card's session date comes out the same every time.
 DEMO_MOMENTS = r"""
 local OA = ...
+local now = os.time({ year = 2026, month = 10, day = 31, hour = 21, min = 10 })
+time = function() return now end
 local session = OA.Moments.Current()
 if session then
   session.started, session.gt = time() - 4210, GetTime() - 4210
@@ -93,8 +96,8 @@ SHOTS = [
          detail="While live, friendly players show their alias above their heads."),
     dict(name="meters", kicker="DAMAGE METERS", head="Meters too, even in combat.",
          detail="Blizzard's and EllesmereUI's damage meters keep every alias in combat."),
-    dict(name="frames", kicker="FRAMES", head="Party and raid frames.",
-         detail="Every frame and window: friends, guild, group finder, mail."),
+    dict(name="frames", kicker="FRAMES", head="Every frame, an alias.",
+         detail="Your frame, your target's, party and raid frames, other addons' frames too: all show aliases."),
     dict(name="stream-chat", kicker="STREAM CHAT", head="A clean chat for your viewers.",
          detail="Only the lines you pick, names already swapped. Your real chat keeps running underneath."),
 ]
@@ -181,12 +184,13 @@ def trim(shot):
     return shot.crop(box) if box else shot
 
 
-def place(img, shot, box, pixel=False):
-    """The picture as big as fits in the box, with a soft shadow. Pixel art (the Deck's font) is
-    scaled up by whole steps so it stays sharp; anything else is only ever scaled down."""
+def place(img, shot, box, pixel=False, most=4):
+    """The picture as big as fits in the box, with a soft shadow. Pixel art (the Deck's font) and
+    small screenshots are scaled up by whole steps (at most `most`) so they stay sharp; anything
+    else is only ever scaled down."""
     bx, by, bw, bh = box
-    if pixel:
-        step = max(1, min(bw // shot.width, bh // shot.height))
+    if pixel and shot.width <= bw and shot.height <= bh:
+        step = max(1, min(bw // shot.width, bh // shot.height, most))
         shot = shot.resize((shot.width * step, shot.height * step), Image.NEAREST)
     else:
         scale = min(bw / shot.width, bh / shot.height, 1.0)
@@ -200,12 +204,78 @@ def place(img, shot, box, pixel=False):
     return x, y, shot.width, shot.height
 
 
-def cover(shot, w, h):
-    """A game screenshot cut to fill w x h (the middle kept)."""
-    scale = max(w / shot.width, h / shot.height)
-    shot = shot.resize((round(shot.width * scale), round(shot.height * scale)), Image.LANCZOS)
-    left, top = (shot.width - w) // 2, (shot.height - h) // 2
-    return shot.crop((left, top, left + w, top + h))
+def key_out(part, bg):
+    """The game world left inside a window's box (beside a short row of icons) made clear: the
+    world's color reached from the edges, stopping at the window's own colors and outlines."""
+    part = part.convert("RGBA")
+    px = part.load()
+    w, h = part.size
+    seen = set()
+    todo = [(x, y) for x in range(w) for y in (0, h - 1)] + [(x, y) for y in range(h) for x in (0, w - 1)]
+    while todo:
+        x, y = todo.pop()
+        if (x, y) in seen or not (0 <= x < w and 0 <= y < h):
+            continue
+        seen.add((x, y))
+        r, g, b, _ = px[x, y]
+        if abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2]) > 80:
+            continue
+        px[x, y] = (0, 0, 0, 0)
+        todo += [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+    return part
+
+
+def windows(shot):
+    """A screenshot's windows without the game world around and between them, stacked: kept only
+    when the world behind is one bright color (its four corners agree). A dark background is left
+    as it is: it could be the window itself (a chat), and cutting there would split its lines."""
+    rgb = shot.convert("RGB")
+    w, h = rgb.size
+    corners = [rgb.getpixel(p) for p in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))]
+    bg = [sum(c[i] for c in corners) // 4 for i in range(3)]
+    if max(max(abs(c[i] - bg[i]) for i in range(3)) for c in corners) > 40 or sum(bg) < 180:
+        return shot
+    px = rgb.load()
+    ui = [[sum(abs(a - b) for a, b in zip(px[x, y], bg)) > 80 for x in range(w)] for y in range(h)]
+    bands, start = [], None
+    for y in range(h + 1):
+        on = y < h and sum(ui[y]) > w * 0.25
+        if on and start is None:
+            start = y
+        elif not on and start is not None:
+            if bands and start - bands[-1][1] < 12:
+                bands[-1] = (bands[-1][0], y)  # a thin gap: the same window
+            else:
+                bands.append((start, y))
+            start = None
+    parts = []
+    for top, bottom in bands:
+        if bottom - top < 6:
+            continue
+        cols = [x for x in range(w) if sum(ui[y][x] for y in range(top, bottom)) > (bottom - top) * 0.15]
+        if cols:
+            parts.append(key_out(shot.crop((cols[0], top, cols[-1] + 1, bottom)), bg))
+    if not parts:
+        return shot
+    gap = 28
+    out = Image.new("RGBA", (max(p.width for p in parts), sum(p.height for p in parts) + gap * (len(parts) - 1)))
+    y = 0
+    for part in parts:
+        out.paste(part, (0, y))
+        y += part.height + gap
+    return out
+
+
+def find_shot(name):
+    """The screenshot saved for a card: release/shots/<name>.png or .jpg, any case ("stream chat"
+    and "stream_chat" count as "stream-chat")."""
+    if not os.path.isdir(SHOTS_DIR):
+        return None
+    for file in sorted(os.listdir(SHOTS_DIR)):
+        base, ext = os.path.splitext(file)
+        if ext.lower() in (".png", ".jpg", ".jpeg") and base.lower().replace(" ", "-").replace("_", "-") == name:
+            return os.path.join(SHOTS_DIR, file)
+    return None
 
 
 def save(img, name):
@@ -280,15 +350,14 @@ def main():
         d.text((x, y + h + 14), label, font=LABEL, fill=MUTED)
     save(img, DECK["name"])
 
+    # Screenshots from the game: whole, a small crop enlarged by whole steps (no blur).
     for shot_card in SHOTS:
-        for ext in (".png", ".jpg", ".jpeg"):
-            path = os.path.join(SHOTS_DIR, shot_card["name"] + ext)
-            if os.path.isfile(path):
-                img = background()
-                text_block(img, shot_card)
-                place(img, cover(Image.open(path).convert("RGB"), 1040, 640), (790, 220, 1050, 640))
-                save(img, "shot-" + shot_card["name"])
-                break
+        path = find_shot(shot_card["name"])
+        if path:
+            img = background()
+            text_block(img, shot_card)
+            place(img, windows(Image.open(path).convert("RGBA")), (780, 110, 1100, 860), pixel=True, most=3)
+            save(img, "shot-" + shot_card["name"])
 
 
 if __name__ == "__main__":

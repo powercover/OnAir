@@ -5,7 +5,9 @@ Everything in this folder is for the project pages. None of it goes in the addon
 - `description.md`: the long description (paste it on both sites).
 - `logo.png`: the project logo, 512 x 512 (`python tests/kit/make_media.py --page-logo` draws it again).
 - `gallery/`: the images for both sites' galleries, 1920 x 1080 (`python tests/kit/make_gallery.py`
-  draws them again, from OnAir's own windows).
+  draws them again, from OnAir's own windows), and `00-how-it-works.gif`, an 8-second loop of
+  OnAir's own widgets going live and back: the Deck's handle, the ON AIR slate, the stream chat with
+  a marked moment, the "Real names are back" banner (`python tests/kit/make_animation.py`).
 - `shots/`: your screenshots from the game, for gallery cards of their own (see below).
 
 ## 1. Build the zip
@@ -25,7 +27,9 @@ the changelog first, and says if a file isn't committed yet.
 2. Name: **OnAir**. If the address "onair" is taken, pick another one (the name can stay OnAir).
 3. Summary: see below. Description: paste `description.md`.
 4. Logo: `logo.png`. Category: Audio & Video (add Chat & Communication if you like).
-5. Images: upload everything in `gallery/`, in order (`01-go-live` first: it's the cover).
+5. Images: upload everything in `gallery/`, in order (`01-go-live` first: it's the cover). Then put
+   `00-how-it-works.gif` at the very top of the description (the editor's image button can pick it
+   from the uploaded images): it shows how OnAir works before anyone reads a word.
 6. License: All Rights Reserved (the same as `LICENSE.txt` and the TOC).
 7. Upload a file: the zip from step 1.
    - Release type: Release.
