@@ -1,0 +1,26 @@
+# Releases OnAir when a version tag is pushed (git tag 1.1.0, then git push origin 1.1.0): BigWigs'
+# packager builds the zip (see .pkgmeta) and uploads it to CurseForge, Wago and the GitHub release.
+# It needs the project IDs in OnAir.toc (## X-Curse-Project-ID, ## X-Wago-ID) and two repository
+# secrets, CF_API_KEY and WAGO_API_TOKEN; a site without them is skipped. See release/checklist.md.
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
+      WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: BigWigsMods/packager@v2

@@ -82,6 +82,10 @@ function base:GetUnit() return "Bob", "mouseover" end
 function base:AddMessage(text) self._lines = self._lines or {}; table.insert(self._lines, text) end
 function base:Clear() self._lines = {} end
 function base:Click(button) local fn = self:GetScript("OnClick"); if fn then fn(self, button or "LeftButton") end end
+-- Every file asked for (textures, fonts): the run checks each one is in the addon folder.
+ASKED = {}
+function base:SetTexture(path) if type(path) == "string" then ASKED[path] = true end end
+function base:SetFont(path) if type(path) == "string" then ASKED[path] = true end end
 
 local VERBS = { "Set", "Get", "Is", "Enable", "Disable", "Register", "Unregister", "Clear", "Play", "Stop",
   "Start", "Raise", "Lower", "Add", "Insert", "Scroll", "Can", "Has", "Highlight" }
@@ -229,7 +233,7 @@ MOUSELOOK = false
 function IsMouselooking() return MOUSELOOK end
 function IsMouseButtonDown() return false end
 function GetMouseFoci() return {} end
-C_AddOns = { GetAddOnMetadata = function() return "0.1.0" end }
+C_AddOns = { GetAddOnMetadata = function() return "1.0.0" end }
 C_NamePlate = { GetNamePlates = function() return { { namePlateUnitToken = "nameplate1", UnitFrame = { name = UIParent:CreateFontString() } } } end,
   GetNamePlateForUnit = function() return { UnitFrame = { name = UIParent:CreateFontString() } } end }
 C_FriendList = { GetNumFriends = function() return 1 end, GetFriendInfoByIndex = function() return { name = "Pal-Kazzak" } end,
@@ -1077,6 +1081,19 @@ def load(toc, db):
     return lua, oa
 
 
+def missing_media(asked):
+    """The addon's own files it asked for (textures, fonts) that aren't in its folder."""
+    missing = []
+    for path in asked:
+        rel = path.replace("\\", "/")
+        if "/AddOns/OnAir/" not in rel:
+            continue
+        full = os.path.join(ROOT, rel.split("/AddOns/OnAir/", 1)[1])
+        if not (os.path.isfile(full) or any(os.path.isfile(full + ext) for ext in (".tga", ".blp", ".png"))):
+            missing.append(rel)
+    return sorted(missing)
+
+
 def run(toc, look="viewfinder"):
     lua, oa = load(toc, '{ look = "%s" }; LOOK = "%s"' % (look, look))
     lua.execute(DRIVE, oa)
@@ -1086,7 +1103,9 @@ def run(toc, look="viewfinder"):
     guarded = [g.GUARDED[i] for i in range(1, len(g.GUARDED) + 1)]
     if guarded:
         raise RuntimeError("errors caught by the guard: " + " || ".join(guarded))
-    return {k: g[k] for k in ("RESULT_TEXT", "RESULT_BUTTON", "RESULT_CHAT", "RESULT_TELL", "RESULT_MENU", "STREAM_LINES",
+    asked = [k for k in g.ASKED.keys() if "AddOns\\OnAir\\" in k]
+    media = {"MEDIA_ASKED": len(asked), "MEDIA_MISSING": missing_media(asked)}
+    return media | {k: g[k] for k in ("RESULT_TEXT", "RESULT_BUTTON", "RESULT_CHAT", "RESULT_TELL", "RESULT_MENU", "STREAM_LINES",
                               "MOMENTS", "CHAPTERS", "MARKERS", "SHIELD_HELD", "SHIELD_FRIEND", "SHIELD_DECLINED",
                               "SHIELD_REPLY", "ZONE_TEXT", "HELD_BEFORE_END", "HELD_AFTER_END", "PREVIEW_TEXT",
                               "NPC_GENERIC", "NPC_AFTER_RESET", "NPC_BOSS", "NPC_HIDDEN_ALPHA", "NPC_CVAR",
@@ -1237,6 +1256,8 @@ if __name__ == "__main__":
                     (results["OVERHEAD_OK"], "names above heads: name-only plates while live, off in instances, your settings back after"),
                     (results["BLANK_PAGE_OK"], "blank name font: the Hide page says where it stands; switching it in a session sets nothing"),
                     (results["STREAM_LEFT"], "stream chat lines start on the left (after its font is applied)"),
+                    (results["MEDIA_ASKED"] > 20 and not results["MEDIA_MISSING"],
+                     "every texture and font OnAir asks for is in its folder"),
                     (results["PET_OK"], "a stranger's pet: its tooltip reads its owner's alias, not the pet's or owner's name"),
                     (results["REVIEW_OK"], "late guild names, places, possessives and notes reach text on screen; login roster, joined community, chat after going live"),
                     (results["PERF_OK"], "work stays small: lists read at most every few seconds, each new plate once, a chat line once"),

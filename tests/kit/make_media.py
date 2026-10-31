@@ -3,9 +3,11 @@ glyph icons. Everything is drawn white (except the logos) at 4x and scaled down,
 tint it with SetVertexColor and the edges stay smooth.
 
 python tests/kit/make_media.py
+python tests/kit/make_media.py --page-logo   (only the logo for the project pages: release/logo.png)
 """
 import math
 import os
+import sys
 
 from PIL import Image, ImageDraw, ImageFilter
 
@@ -40,8 +42,7 @@ def broadcast(d, cx, cy, unit, color, dot=True):
         d.arc(box, 142, 218, fill=color, width=w)
 
 
-def logo():
-    size = 128
+def logo(size=128, path=os.path.join(MEDIA, "Logo.tga")):
     img = canvas(size)
     d = ImageDraw.Draw(img)
     u = size * S
@@ -55,7 +56,7 @@ def logo():
     img = Image.alpha_composite(img, glow)
     d = ImageDraw.Draw(img)
     broadcast(d, u / 2, u / 2, u * 0.95, RED)
-    save(img, os.path.join(MEDIA, "Logo.tga"), size)
+    save(img, path, size)
 
 
 def minimap_icon():
@@ -390,6 +391,10 @@ ICON_FUNCS = {
 }
 
 if __name__ == "__main__":
+    if "--page-logo" in sys.argv:
+        # CurseForge's and Wago's project logo: the same mark, large.
+        logo(512, os.path.join(ROOT, "release", "logo.png"))
+        sys.exit(0)
     logo()
     minimap_icon()
     shapes()

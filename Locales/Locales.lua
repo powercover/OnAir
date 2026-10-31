@@ -1,8 +1,8 @@
 local _, OA = ...
 
 -- Translations. The addon's text is written in English and looked up through OA.L: L["Go live"]
--- is the chosen language's text, or the English itself when there's no translation yet. The other
--- languages are added before the first release.
+-- is the chosen language's text, or the English itself when there's no translation yet. The first
+-- release is English only; other languages come in later versions.
 local active = {}
 
 OA.L = setmetatable({}, {

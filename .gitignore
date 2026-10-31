@@ -4,3 +4,5 @@ __pycache__/
 # local notes
 CLAUDE.md
 tests/renders/
+# release zips (tests/kit/package.py)
+dist/
