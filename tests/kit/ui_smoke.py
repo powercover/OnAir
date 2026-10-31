@@ -157,7 +157,7 @@ function GetInboxNumItems() return 1 end
 function GetInboxHeaderInfo() return nil, nil, "Mailer-Kazzak" end
 function GetNumBattlefieldScores() return 0 end
 function BNGetNumFriends() return 1 end
-function BNGetInfo() return 1, "Nimbus#2468" end
+function BNGetInfo() return 1, "OnAir#0000" end
 function PlaySound() end
 function ReloadUI() end
 function StaticPopup_Show() end
