@@ -491,6 +491,16 @@ def render(skin, pages, live, out):
         path = os.path.join(out, f"{skin}-deck{'-live' if live else ''}.png")
         img.save(path)
         written.append(path)
+        # the tuck handle (it hangs off the Deck's inner side, shown here over it)
+        lua.execute("""local deck = ...
+for _, f in ipairs({ deck:GetChildren() }) do
+  for _, t in ipairs({ f:GetChildren() }) do if t.arrow then t:SetAlpha(1) end end
+end""", deck)
+        rend = Renderer(lua)
+        img = rend.draw(deck, (r[0] - 16, r[1] - 40, r[2] + 16, r[3] + 40))
+        path = os.path.join(out, f"{skin}-handle{'-live' if live else ''}.png")
+        img.save(path)
+        written.append(path)
     guarded = [g.GUARDED[i] for i in range(1, len(g.GUARDED) + 1)]
     if guarded:
         print("guarded errors:", guarded)

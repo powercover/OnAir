@@ -3,13 +3,20 @@ local _, OA = ...
 -- Teaches the name engine every player the UI can show: the group, units you look at, chat
 -- authors (Chat.lua), and the social lists. Each list is read when the game says it changed, so
 -- names are known before (or right after) a window draws them; Hide.lua re-scrubs what's on screen
--- whenever a new name comes in.
+-- whenever a new name comes in. Big lists (a guild, communities, friends) are read a slice per
+-- frame (Utils.Job), and again at most every few seconds however often the game says they changed.
 OA.Collect = {}
 
 local Collect = OA.Collect
 local Names = OA.Names
 local Utils = OA.Utils
 local IsPlain = Utils.IsPlainString
+local Pause = Utils.Pause
+
+-- When each list was last read, and which ones wait to be read again (see Soon below). A read that
+-- found nobody doesn't count: right after login the lists are still empty, and the real one must
+-- not wait out the gap.
+local lastRun, queued = {}, {}
 
 local function Call(fn, ...)
     if type(fn) ~= "function" then
@@ -67,11 +74,15 @@ function Collect.GuildRoster()
         return
     end
     local total = GetNumGuildMembers() or 0
+    if total == 0 then
+        lastRun.guild = nil
+    end
     for i = 1, math.min(total, 2000) do
         local name, _, _, _, _, _, publicNote, officerNote = Call(GetGuildRosterInfo, i)
         Names.AddNote(publicNote)
         Names.AddNote(officerNote)
         Names.AddFull(name, "other")
+        Pause()
     end
 end
 
@@ -87,15 +98,21 @@ local function Character(game)
     return character
 end
 
-function Collect.Friends()
+-- WoW friends and the ignore list.
+function Collect.WoWFriends()
     local FL = C_FriendList
     if FL and FL.GetNumFriends then
-        for i = 1, (Call(FL.GetNumFriends) or 0) do
+        local count = Call(FL.GetNumFriends) or 0
+        if count == 0 then
+            lastRun["wow friends"] = nil
+        end
+        for i = 1, count do
             local info = Call(FL.GetFriendInfoByIndex, i)
             if info then
                 Names.AddFull(info.name, "other")
                 Names.AddNote(info.notes)
             end
+            Pause()
         end
     end
     if FL and FL.GetNumIgnores then
@@ -103,24 +120,47 @@ function Collect.Friends()
             Names.AddFull(Call(FL.GetIgnoreName, i), "other")
         end
     end
+end
+
+-- One Battle.net friend, by their place in the list.
+function Collect.Friend(i)
     local BN = C_BattleNet
-    if BN and BN.GetFriendAccountInfo and type(BNGetNumFriends) == "function" then
-        for i = 1, (Call(BNGetNumFriends) or 0) do
-            local account = Call(BN.GetFriendAccountInfo, i)
-            if account then
-                Names.AddBNet(account.bnetAccountID, account.accountName, account.battleTag, Character(account.gameAccountInfo))
-                Names.AddNote(account.note)
-                -- Every game account, not only the "main" one: with the Battle.net app open, the
-                -- app can be the main one and the WoW character would never be learned.
-                for g = 1, (BN.GetFriendNumGameAccounts and Call(BN.GetFriendNumGameAccounts, i) or 0) or 0 do
-                    local character = Character(Call(BN.GetFriendGameAccountInfo, i, g))
-                    if character then
-                        Names.AddBNet(account.bnetAccountID, account.accountName, account.battleTag, character)
-                    end
-                end
-            end
+    if not (BN and BN.GetFriendAccountInfo) then
+        return
+    end
+    local account = Call(BN.GetFriendAccountInfo, i)
+    if not account then
+        return
+    end
+    Names.AddBNet(account.bnetAccountID, account.accountName, account.battleTag, Character(account.gameAccountInfo))
+    Names.AddNote(account.note)
+    -- Every game account, not only the "main" one: with the Battle.net app open, the app can be
+    -- the main one and the WoW character would never be learned.
+    for g = 1, (BN.GetFriendNumGameAccounts and Call(BN.GetFriendNumGameAccounts, i) or 0) or 0 do
+        local character = Character(Call(BN.GetFriendGameAccountInfo, i, g))
+        if character then
+            Names.AddBNet(account.bnetAccountID, account.accountName, account.battleTag, character)
         end
     end
+end
+
+function Collect.BNFriends()
+    if type(BNGetNumFriends) ~= "function" then
+        return
+    end
+    local count = Call(BNGetNumFriends) or 0
+    if count == 0 then
+        lastRun["bn friends"] = nil
+    end
+    for i = 1, count do
+        Collect.Friend(i)
+        Pause()
+    end
+end
+
+function Collect.Friends()
+    Collect.WoWFriends()
+    Collect.BNFriends()
 end
 
 -- Recent allies (the friends window's Recent tab): people you raided with, whispered, grouped with.
@@ -163,9 +203,35 @@ function Collect.BNetAccount(accountID)
     if not account then
         return nil
     end
-    local game = account.gameAccountInfo
-    local character = game and IsPlain(game.characterName) and game.characterName or nil
-    return Names.AddBNet(account.bnetAccountID or accountID, account.accountName, account.battleTag, character)
+    return Names.AddBNet(account.bnetAccountID or accountID, account.accountName, account.battleTag,
+        Character(account.gameAccountInfo))
+end
+
+-- One member of a community.
+function Collect.Member(clubId, memberId)
+    local info = C_Club and Call(C_Club.GetMemberInfo, clubId, memberId)
+    if info then
+        Names.AddNote(info.memberNote)
+        Names.AddNote(info.officerNote)
+        if not info.isSelf then
+            Names.AddFull(info.name, "other")
+        end
+    end
+end
+
+function Collect.ClubMembers(clubId)
+    local members = C_Club and Call(C_Club.GetClubMembers, clubId) or {}
+    for i = 1, math.min(#members, 2000) do
+        Collect.Member(clubId, members[i])
+        Pause()
+    end
+end
+
+-- The guild is a community too, but its members are the guild roster (read on its own): only
+-- the other communities are read here.
+local function IsGuildClub(clubId)
+    local guild = C_Club and C_Club.GetGuildClubId and Call(C_Club.GetGuildClubId)
+    return guild ~= nil and guild == clubId
 end
 
 function Collect.Clubs()
@@ -174,20 +240,14 @@ function Collect.Clubs()
         return
     end
     local guildType = Enum.ClubType and Enum.ClubType.Guild
-    for _, club in ipairs(Call(Club.GetSubscribedClubs) or {}) do
+    local clubs = Call(Club.GetSubscribedClubs) or {}
+    if not clubs[1] then
+        lastRun.clubs = nil
+    end
+    for _, club in ipairs(clubs) do
         if club.clubType ~= guildType then
             Names.AddCommunity(club.name)
-        end
-        local members = Call(Club.GetClubMembers, club.clubId) or {}
-        for i = 1, math.min(#members, 2000) do
-            local info = Call(Club.GetMemberInfo, club.clubId, members[i])
-            if info then
-                Names.AddNote(info.memberNote)
-                Names.AddNote(info.officerNote)
-            end
-            if info and not info.isSelf then
-                Names.AddFull(info.name, "other")
-            end
+            Collect.ClubMembers(club.clubId)
         end
     end
 end
@@ -301,29 +361,69 @@ function Collect.Arena()
     end
 end
 
--- Everything at once: when going live.
+local function Read(name, fn)
+    lastRun[name] = GetTime()
+    Utils.Job(name, fn)
+end
+
+-- Everything: when going live. Who is on screen right now (the group, units, plates) at once.
 function Collect.All()
     Collect.Self()
     Collect.Group()
     for _, unit in ipairs({ "target", "focus", "targettarget", "focustarget", "mouseover" }) do
         Collect.Unit(unit)
     end
-    Collect.GuildRoster()
-    Collect.Friends()
-    Collect.Clubs()
+    Collect.Guilds()
+    Collect.ClubNames()
     Collect.Mail()
     -- Group finder listings already on screen (and applicants): no new event comes for them.
     Collect.LFG()
     Collect.RecentAllies()
-    -- Names only other addons' saved data holds (alts, past groups, whisper contacts).
-    OA.Archives.Read()
     for _, plate in ipairs(C_NamePlate.GetNamePlates() or {}) do
         if plate.namePlateUnitToken then
             Collect.Unit(plate.namePlateUnitToken)
         end
     end
+    -- The long lists, a slice per frame, one after the other (each on its own: one failing can't
+    -- stop the rest): friends first (their window shows BattleTags), then the guild, the
+    -- communities, and names only other addons' saved data holds.
+    Read("wow friends", Collect.WoWFriends)
+    Read("bn friends", Collect.BNFriends)
+    Read("guild", Collect.GuildRoster)
+    Read("clubs", Collect.Clubs)
+    Utils.Job("archives", OA.Archives.Read)
     if C_GuildInfo and C_GuildInfo.GuildRoster then
         Call(C_GuildInfo.GuildRoster)
+    end
+end
+
+-- A list the game says changed: read again, but at most every `gap` seconds (a big guild sends
+-- its event every few seconds while people log in and out), and a slice per frame.
+local function Soon(name, gap, fn, arg)
+    if queued[name] then
+        return
+    end
+    local wait = (lastRun[name] or -math.huge) + gap - GetTime()
+    if wait <= 0 then
+        lastRun[name] = GetTime()
+        Utils.Job(name, fn, arg)
+        return
+    end
+    queued[name] = true
+    C_Timer.After(wait, function()
+        queued[name] = nil
+        lastRun[name] = GetTime()
+        if OA.live then
+            Utils.Job(name, fn, arg)
+        end
+    end)
+end
+
+local function ClubChanged(clubId)
+    -- A community joined since going live: its name too.
+    Collect.ClubNames()
+    if clubId ~= nil and not Utils.IsSecret(clubId) and not IsGuildClub(clubId) then
+        Soon("club " .. tostring(clubId), 30, Collect.ClubMembers, clubId)
     end
 end
 
@@ -336,14 +436,37 @@ local HANDLERS = {
     UNIT_TARGET = function() Collect.Unit("targettarget"); Collect.Unit("focustarget") end,
     NAME_PLATE_UNIT_ADDED = function(unit) Collect.Unit(unit) end,
     ARENA_OPPONENT_UPDATE = Collect.Arena,
-    GUILD_ROSTER_UPDATE = Collect.GuildRoster,
+    GUILD_ROSTER_UPDATE = function() Soon("guild", 20, Collect.GuildRoster) end,
     PLAYER_GUILD_UPDATE = Collect.Guilds,
-    FRIENDLIST_UPDATE = Collect.Friends,
-    BN_FRIEND_LIST_SIZE_CHANGED = Collect.Friends,
-    BN_FRIEND_INFO_CHANGED = Collect.Friends,
-    BN_FRIEND_ACCOUNT_ONLINE = Collect.Friends,
-    CLUB_MEMBERS_UPDATED = Collect.Clubs,
-    CLUB_MEMBER_ADDED = Collect.Clubs,
+    FRIENDLIST_UPDATE = function() Soon("wow friends", 5, Collect.WoWFriends) end,
+    BN_FRIEND_LIST_SIZE_CHANGED = function() Soon("bn friends", 5, Collect.BNFriends) end,
+    -- A friend's status changed: the game says which one (the whole list only when it doesn't).
+    BN_FRIEND_INFO_CHANGED = function(index)
+        if type(index) == "number" and not Utils.IsSecret(index) then
+            Collect.Friend(index)
+        else
+            Soon("bn friends", 5, Collect.BNFriends)
+        end
+    end,
+    -- A friend came online: read them whole (every game account) when the list can say where.
+    BN_FRIEND_ACCOUNT_ONLINE = function(id)
+        if type(id) ~= "number" or Utils.IsSecret(id) then
+            return
+        end
+        local index = type(BNGetFriendIndex) == "function" and Call(BNGetFriendIndex, id)
+        if type(index) == "number" and not Utils.IsSecret(index) then
+            Collect.Friend(index)
+        else
+            Collect.BNetAccount(id)
+        end
+    end,
+    CLUB_ADDED = ClubChanged,
+    INITIAL_CLUBS_LOADED = function()
+        Collect.ClubNames()
+        Soon("clubs", 30, Collect.Clubs)
+    end,
+    CLUB_MEMBERS_UPDATED = ClubChanged,
+    CLUB_MEMBER_ADDED = function(clubId, memberId) Collect.Member(clubId, memberId) end,
     WHO_LIST_UPDATE = Collect.Who,
     -- Whisper senders, from the event itself: a whisper addon may take the line out of chat
     -- before OnAir's chat filter ever sees it.

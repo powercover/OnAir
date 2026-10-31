@@ -97,6 +97,9 @@ for _, kind in ipairs({ "Frame", "Button", "Texture", "FontString", "EditBox", "
   local index = setmetatable({}, permissive)
   metas[kind] = { __index = index }
 end
+-- As in the game, a font object brings its own alignment: centered.
+function metas.ScrollingMessageFrame.__index:SetFontObject(font) self._font, self._jh = font, "CENTER" end
+function metas.ScrollingMessageFrame.__index:SetJustifyH(j) self._jh = j end
 
 function CreateFrame(kind, name, parent) return NewObject(kind, name, parent) end
 function CreateFont(name) return NewObject("Font", name) end
@@ -114,6 +117,11 @@ StaticPopupDialogs = {}
 SlashCmdList = {}
 SOUNDKIT = {}
 STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
+UNIT_NAME_FONT = "Fonts\\FRIZQT__.TTF"
+UNIT_NAME_FONT_ROMAN = "Fonts\\FRIZQT__.TTF"
+UNIT_NAME_FONT_CYRILLIC = "Fonts\\FRIZQT___CYR.TTF"
+UNIT_NAME_FONT_KOREAN = "Fonts\\2002B.TTF"
+UNIT_NAME_FONT_CHINESE = "Fonts\\ARKai_T.ttf"
 Enum = { TooltipDataType = { Unit = 2 }, ClubType = { Guild = 2 } }
 
 local hookLog = {}
@@ -396,6 +404,7 @@ fire("CHAT_MSG_MONSTER_SAY", "Hello Bob, welcome.", "Innkeeper", "", "", "", "",
 fire("CHAT_MSG_LOOT", "Bob receives loot: [Cloth].", "", "", "", "", "", 0, 0, "", 0, 1, "")
 fire("CHAT_MSG_PARTY", "secret plan", "Bob-Kazzak", "", "", "", "", 0, 0, "", 0, 1, "")
 STREAM_LINES = table.concat(smf._lines, " || ")
+STREAM_LEFT = smf._jh == "LEFT"
 OA.EndLive()
 assert(not OnAirStreamChat:IsShown(), "stream chat hidden after the broadcast")
 UI.ShowPage("stream", true); walkConsole()
@@ -713,8 +722,22 @@ OA.GoLive()
 local newPlate = CreateFrame("Frame", nil, UIParent)
 newPlate.castTextFrame = CreateFrame("Frame", nil, newPlate)
 newPlate.castTarget = newPlate.castTextFrame:CreateFontString()
+newPlate.castTarget:SetText({ __secret = true })
+local secretHidden = newPlate.castTarget:GetAlpha() == 0
 newPlate.castTarget:SetText("Bob")
-CAST_OK = newPlate.castTarget:GetAlpha() == 0
+local known = newPlate.castTarget:GetAlpha() == 1 and not newPlate.castTarget:GetText():find("Bob")
+newPlate.castTarget:SetText("Unknownguy")
+local unknownHidden = newPlate.castTarget:GetAlpha() == 0
+-- the mob targets you: its secret cast target reads as your alias
+newPlate.unit = "nameplate9"
+local isUnit = UnitIsUnit
+UnitIsUnit = function(a, b) if a == "nameplate9target" and b == "player" then return true end return isUnit and isUnit(a, b) end
+local exists = UnitExists
+UnitExists = function(u) if u == "nameplate9target" then return true end return exists(u) end
+newPlate.castTarget:SetText({ __secret = true })
+local me = newPlate.castTarget:GetAlpha() == 1 and newPlate.castTarget:GetText() == OA.Names.MeAlias()
+UnitIsUnit, UnitExists = isUnit, exists
+CAST_OK = secretHidden and known and unknownHidden and me
 OA.EndLive()
 
 -- the audit's fixes: strangers by realm, cut-short names, text boxes, saved data, secret labels
@@ -770,6 +793,242 @@ local emptied = noteLabel:GetText() == "" and prefixed:GetText() == "" and sente
 OA.EndLive()
 NOTES_OK = emptied and noteLabel:GetText():find("Steve") ~= nil
 
+-- meter rows in combat: your own row and a remembered class + spec read as their alias
+OA.GoLive()
+-- (EllesmereUI: the row's data is a plain table the label can't reach; label -> text frame ->
+-- bar with the spec icon. The icon may change after the label, as the row is redrawn.)
+local dm = CreateFrame("Frame", "EllesmereUIDMFrame7", UIParent)
+local function Row()
+  local row = CreateFrame("Button", nil, dm)
+  local fill = CreateFrame("StatusBar", nil, row)
+  local tex = fill:CreateTexture()
+  tex.GetTexture = function() return tex._icon end
+  local holder = CreateFrame("Frame", nil, fill)
+  local rank = holder:CreateFontString()
+  local name = holder:CreateFontString()
+  name:SetPoint("LEFT", rank, "RIGHT")
+  rank:SetText("1.")
+  name._icon = tex
+  return name
+end
+GetSpecialization = function() return 1 end
+GetSpecializationInfo = function() return 265, "Affliction", "", 136145 end
+-- a frame later, as in the game: what OnAir put off runs after the row got its icon
+local function Fill(label, text, icon)
+  label:SetText(text)
+  label._icon._icon = icon
+  run(0.05)
+end
+local mine = Row()
+Fill(mine, { __secret = true }, 136145)
+local other = Row()
+Fill(other, "Bob", 135940)
+local bobAlias = other:GetText()
+Fill(other, { __secret = true }, 135940)
+-- a redraw mid-fight: the alias stays (no "unknown" in between)
+mine:SetText({ __secret = true })
+local midRedraw = mine:GetText() == OA.Names.MeAlias()
+run(0.05)
+METER_ALIAS_OK = midRedraw and mine:GetText() == OA.Names.MeAlias() and bobAlias ~= "Bob" and other:GetText() == bobAlias
+-- a group member's row named before OnAir learned them (the roster came after): masked then
+local late = Row()
+Fill(late, "Xoulate", 135940)
+OA.Names.AddFull("Xoulate-Kazzak", "crew")
+run(0.2)
+METER_ALIAS_OK = METER_ALIAS_OK and not late:GetText():find("Xoulate")
+OA.EndLive()
+-- ending live: a label that keeps reporting hidden text still gets its name back
+local stuck = Row()
+OA.GoLive()
+stuck:SetText({ __secret = true })
+stuck.GetText = function() return { __secret = true } end
+OA.EndLive()
+stuck.GetText = nil
+METER_ALIAS_OK = METER_ALIAS_OK and issecretvalue(stuck._text)
+GetSpecialization, GetSpecializationInfo = nil, nil
+
+-- performance: big lists are read at most every few seconds, the guild's own community isn't
+-- read as a community, a burst of nameplates looks at each plate once, and a chat line shown in
+-- several windows is worked out once (counted, not timed)
+OA.GoLive(); run(0.5)
+local queued, timerAfter = {}, C_Timer.After
+C_Timer.After = function(_, fn) queued[#queued + 1] = fn end
+local function flush()
+  local list = queued; queued = {}
+  for _, fn in ipairs(list) do fn() end
+end
+local rosterReads, rosterInfo = 0, GetGuildRosterInfo
+GetGuildRosterInfo = function(i) rosterReads = rosterReads + 1; return rosterInfo(i) end
+for _ = 1, 10 do fire("GUILD_ROSTER_UPDATE") end
+flush()
+GetGuildRosterInfo = rosterInfo
+local rosterOk = rosterReads <= 2 * GetNumGuildMembers()
+local memberReads, memberInfo = 0, C_Club.GetMemberInfo
+C_Club.GetMemberInfo = function(...) memberReads = memberReads + 1; return memberInfo(...) end
+C_Club.GetGuildClubId = function() return 1 end
+fire("CLUB_MEMBERS_UPDATED", 1)
+flush()
+local guildClubSkipped = memberReads == 0
+C_Club.GetGuildClubId = nil
+fire("CLUB_MEMBERS_UPDATED", 1)
+flush()
+local clubRead = memberReads == 1
+C_Club.GetMemberInfo = memberInfo
+local nameReads, plates = 0, {}
+for i = 1, 30 do
+  local fs = UIParent:CreateFontString()
+  fs.GetText = function(self) nameReads = nameReads + 1; return self._text end
+  plates["nameplate" .. (100 + i)] = { name = fs, unit = "nameplate" .. (100 + i) }
+end
+EllesmereNameplates_NS = { plates = plates, friendlyPlates = {} }
+for unit in pairs(plates) do fire("NAME_PLATE_UNIT_ADDED", unit) end
+flush()
+EllesmereNameplates_NS = nil
+local platesOk = nameReads > 0 and nameReads <= 30 * 4
+local adds, addFull = 0, OA.Names.AddFull
+OA.Names.AddFull = function(...) adds = adds + 1; return addFull(...) end
+for _ = 1, 5 do
+  FILTERS["CHAT_MSG_SAY"](ChatFrame1, "CHAT_MSG_SAY", "hello there", "Talker-Kazzak", "", "", "", "", 0, 0, "", 0, 4242, "guid9")
+end
+OA.Names.AddFull = addFull
+local chatOnce = adds == 1
+flush()
+C_Timer.After = timerAfter
+OA.EndLive()
+PERF_OK = rosterOk and guildClubSkipped and clubRead and platesOk and chatOnce
+PERF_DBG = table.concat({ "roster=" .. rosterReads, "club=" .. memberReads, "plates=" .. nameReads, "chat=" .. adds }, " ")
+
+-- the review's cases: guild names, places, possessives and notes learned after the text was on
+-- screen; a guild roster that's empty at go-live (fresh login) doesn't hold back the real one; a
+-- community joined while live; a chat line seen before and after going live
+OA.GoLive(); run(0.5)
+local function label(text)
+  local fs = CreateFrame("Frame", nil, UIParent):CreateFontString()
+  fs:SetText(text)
+  return fs
+end
+local guildLine = label("<Latecomers Guild>")
+OA.Names.AddGuild("Latecomers Guild", false)
+run(0.2)
+local phraseLate = not guildLine:GetText():find("Latecomers")
+local zoneLine = label("Goldbrook Lane")
+OA.Names.SetHiddenPlaces({ "Goldbrook Lane" })
+run(0.2)
+local placeLate = not zoneLine:GetText():find("Goldbrook")
+local possessive = label("Latebob's house")
+OA.Names.AddFull("Latebob-Kazzak", "other")
+run(0.2)
+local possLate = not possessive:GetText():find("Latebob")
+local noteCell = label("brother of the raid leader")
+OA.Names.AddNote("brother of the raid leader")
+run(1)
+local noteLate = noteCell:GetText() == ""
+OA.EndLive()
+local guildSize = GetNumGuildMembers
+GetNumGuildMembers = function() return 0 end
+OA.GoLive(); run(0.5)
+GetNumGuildMembers = guildSize
+local held, timerLater = {}, C_Timer.After
+C_Timer.After = function(_, fn) held[#held + 1] = fn end
+local reads, rosterRow = 0, GetGuildRosterInfo
+GetGuildRosterInfo = function(i) reads = reads + 1; return rosterRow(i) end
+fire("GUILD_ROSTER_UPDATE")
+local rosterNow = reads > 0
+GetGuildRosterInfo = rosterRow
+C_Timer.After = timerLater
+for _, fn in ipairs(held) do fn() end
+local clubs = C_Club.GetSubscribedClubs
+C_Club.GetSubscribedClubs = function() return { { clubId = 1, name = "Cozy Club", clubType = 1 }, { clubId = 9, name = "Fresh Faces", clubType = 1 } } end
+fire("CLUB_ADDED", 9)
+C_Club.GetSubscribedClubs = clubs
+local clubLate = not label("Fresh Faces"):GetText():find("Fresh Faces")
+OA.EndLive()
+local offAir = FILTERS["CHAT_MSG_SAY"](ChatFrame1, "CHAT_MSG_SAY", "hi from Bob", "Bob-Kazzak", "", "", "", "", 0, 0, "", 0, 777, "g")
+OA.GoLive()
+local _, liveMsg, liveAuthor = FILTERS["CHAT_MSG_SAY"](ChatFrame1, "CHAT_MSG_SAY", "hi from Bob", "Bob-Kazzak", "", "", "", "", 0, 0, "", 0, 777, "g")
+local chatLive = offAir == false and type(liveAuthor) == "string" and not liveAuthor:find("Bob") and not liveMsg:find("Bob")
+OA.EndLive()
+REVIEW_OK = phraseLate and placeLate and possLate and noteLate and rosterNow and clubLate and chatLive
+REVIEW_DBG = table.concat({ tostring(phraseLate), tostring(placeLate), tostring(possLate), tostring(noteLate),
+  tostring(rosterNow), tostring(clubLate), tostring(chatLive) }, " ")
+
+-- a stranger's pet: its tooltip reads "<owner>'s Pet", and the owner line reads their alias
+UNITNAME_TITLE_MINION = "%s's Minion"
+OA.GoLive(); run(0.5)
+local petTemplate = OA.db.petTemplate
+OA.db.petTemplate = "{owner}'s Pet"
+GameTooltipTextLeft1 = GameTooltip:CreateFontString()
+GameTooltipTextLeft2 = GameTooltip:CreateFontString()
+GameTooltipTextLeft1:SetText("Arax-garath")
+GameTooltipTextLeft2:SetText("Jennie's Minion")
+local tooltipUnit = GameTooltip.GetUnit
+GameTooltip.GetUnit = function() return "Arax-garath", "nameplate1" end
+TooltipDataProcessor._calls[2](GameTooltip)
+GameTooltip.GetUnit = tooltipUnit
+local petLine, ownerLine = GameTooltipTextLeft1:GetText(), GameTooltipTextLeft2:GetText()
+PET_OK = not petLine:find("Arax") and petLine == OA.Names.PetLabel("Jennie") and not ownerLine:find("Jennie")
+  and ownerLine:find("Minion") ~= nil
+-- the owner line already masked when it's read (another hook got there first): still the alias
+GameTooltipTextLeft1:SetText("Veevazin")
+GameTooltipTextLeft2:SetText(OA.Names.Scrub("Jennie's Minion"))
+GameTooltip.GetUnit = function() return "Veevazin", "nameplate1" end
+TooltipDataProcessor._calls[2](GameTooltip)
+GameTooltip.GetUnit = tooltipUnit
+PET_OK = PET_OK and GameTooltipTextLeft1:GetText() == OA.Names.PetLabel("Jennie")
+  and not GameTooltipTextLeft1:GetText():find("Someone") and not petLine:find("Someone")
+PET_DBG = petLine .. " / " .. ownerLine .. " / " .. GameTooltipTextLeft1:GetText()
+OA.db.petTemplate = petTemplate
+OA.EndLive()
+
+-- names above heads: name-only friendly plates while live (they read aliases), switched off in
+-- instances (the game locks them there), the player's own switches back after
+C_CVar._v.nameplateShowFriendlyPlayers = "0"
+C_CVar._v.UnitNameFriendlyPlayerName = "1"
+C_CVar._v.UnitNameEnemyPlayerName = "0"
+OA.GoLive(); run(0.5)
+local platesOn = C_CVar.GetCVar("nameplateShowFriendlyPlayers") == "1" and C_CVar.GetCVar("UnitNameFriendlyPlayerName") == "0"
+  and C_CVar.GetCVar("nameplateShowOnlyNameForFriendlyPlayerUnits") == "1"
+IsInInstance = function() return true, "party" end
+fire("PLAYER_ENTERING_WORLD")
+local instanceOff = C_CVar.GetCVar("nameplateShowFriendlyPlayers") == "0" and C_CVar.GetCVar("UnitNameFriendlyPlayerName") == "0"
+IsInInstance = nil
+fire("ZONE_CHANGED_NEW_AREA")
+local backOn = C_CVar.GetCVar("nameplateShowFriendlyPlayers") == "1"
+-- a switch you change yourself while live: your newer choice stays after the broadcast
+C_CVar._v.UnitNameEnemyPlayerName = "1"
+OA.EndLive()
+local restored = C_CVar.GetCVar("nameplateShowFriendlyPlayers") == "0" and C_CVar.GetCVar("UnitNameFriendlyPlayerName") == "1"
+local yoursKept = C_CVar.GetCVar("UnitNameEnemyPlayerName") == "1"
+-- off the air OnAir never sets them (a settings change, a zone change)
+C_CVar._v.nameplateShowFriendlyPlayers = "0"
+OA.Hide.ApplyCVars()
+fire("PLAYER_ENTERING_WORLD")
+local offAirUntouched = C_CVar.GetCVar("nameplateShowFriendlyPlayers") == "0" and OA.db.savedCVars == nil
+OVERHEAD_OK = platesOn and instanceOff and backOn and restored and yoursKept and offAirUntouched
+OVERHEAD_DBG = table.concat({ tostring(platesOn), tostring(instanceOff), tostring(backOn), tostring(restored),
+  tostring(yoursKept), tostring(offAirUntouched) }, " ")
+
+-- the blank name font's line on the Hide page follows the switch; switching it in a session
+-- leaves the game's name fonts alone (the game only takes them at login)
+do
+  local function hasText(o, want, seen)
+    if type(o) ~= "table" or seen[o] then return false end
+    seen[o] = true
+    if o._kind == "FontString" and o._text == want then return true end
+    for _, r in ipairs(o._regions or {}) do if hasText(r, want, seen) then return true end end
+    for _, c in ipairs(o._children or {}) do if hasText(c, want, seen) then return true end end
+    return false
+  end
+  UI.ShowConsole(); UI.ShowPage("hide", true)
+  OA.db.blankNames = true; UI.Refresh()
+  local waits = hasText(OnAirConsole, OA.L["Now: names still show. Log out and back in to hide them."], {})
+  fire("PLAYER_ENTERING_WORLD")
+  local untouched = UNIT_NAME_FONT == "Fonts\\FRIZQT__.TTF" and UNIT_NAME_FONT_CYRILLIC == "Fonts\\FRIZQT___CYR.TTF"
+  OA.db.blankNames = false; UI.Refresh()
+  local off = hasText(OnAirConsole, OA.L["Now: off. Names above heads show as usual."], {})
+  BLANK_PAGE_OK = waits and untouched and off
+end
+
 -- skins switch live: every skin's console, Deck and quick panels work, then back
 local built = 0
 UI.ShowConsole()
@@ -792,10 +1051,11 @@ SKIN_SWITCH = built == #OA.Kit.THEMES and OA.Kit.Theme().key == LOOK and #DeckBu
 """
 
 
-def run(toc, look="viewfinder"):
+def load(toc, db):
+    """A fresh game with the addon's files run (no events yet); db: Lua source for OnAirDB."""
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(MOCK, toc)
-    lua.execute('OnAirDB = { look = "%s" }; LOOK = "%s"' % (look, look))
+    lua.execute("OnAirDB = " + db)
     # Track every frame so events can be fired at the ones that registered them.
     lua.execute(r"""
     FRAMES = {}
@@ -814,6 +1074,11 @@ def run(toc, look="viewfinder"):
     files = [l.strip().replace("\\", "/") for l in toc_text.splitlines() if l.strip().endswith(".lua")]
     for rel in files:
         lua.execute(open(os.path.join(ROOT, rel), encoding="utf-8").read(), "OnAir", oa)
+    return lua, oa
+
+
+def run(toc, look="viewfinder"):
+    lua, oa = load(toc, '{ look = "%s" }; LOOK = "%s"' % (look, look))
     lua.execute(DRIVE, oa)
     if oa.Kit.Theme().key != look:
         raise RuntimeError("theme not applied: " + look)
@@ -829,7 +1094,90 @@ def run(toc, look="viewfinder"):
                               "SNAP_FREE", "DONE_OK", "SNAP_RIGHT_CENTER", "SNAP_PIECE",
                               "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS",
                               "SNAP_MODES", "LIVE_DRAG", "FIRST_EDIT", "PANELS_OPENED",
-                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK")}
+                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
+
+
+# One login (or /reload) with the blank name font: what the game's name fonts hold after OnAir's
+# load, after the login, and after a later loading screen; what OnAir says and remembers.
+BLANK_LOGIN = r"""
+local OA, initial, missing = ...
+PRINTED = {}
+print = function(text) PRINTED[#PRINTED + 1] = tostring(text) end
+if missing then
+  local index = getmetatable(UIParent:CreateFontString()).__index
+  index.SetFont = function(_, path)
+    if path:find("OnAirBlank", 1, true) then error("Invalid font asset (" .. path .. "): file not found") end
+  end
+end
+local function fire(event, ...)
+  for _, f in ipairs(FRAMES) do
+    if f._events and f._events[event] and f._scripts and f._scripts.OnEvent then
+      f._scripts.OnEvent(f, event, ...)
+    end
+  end
+end
+local function fonts()
+  local t = {}
+  for _, global in ipairs(OA.Hide.NAME_FONTS) do t[#t + 1] = tostring(_G[global]) end
+  return table.concat(t, " ")
+end
+fire("ADDON_LOADED", "OnAir")
+AT_LOAD = fonts()
+-- an addon loading after OnAir sets a name font of its own
+UNIT_NAME_FONT = "Interface\\AddOns\\Other\\Name.ttf"
+fire("PLAYER_LOGIN")
+fire("PLAYER_ENTERING_WORLD", initial, not initial)
+AT_ENTER = fonts()
+-- a later loading screen: OnAir sets nothing any more
+UNIT_NAME_FONT_CYRILLIC = "Interface\\AddOns\\Other\\Name.ttf"
+fire("PLAYER_ENTERING_WORLD", false, false)
+AFTER = fonts()
+STATE = OA.Hide.BlankFontState()
+NOW = OA.db.blankNamesNow
+SAID = table.concat(PRINTED, " | ")
+local g = {}
+for i = 1, #GUARDED do g[#g + 1] = GUARDED[i] end
+ERRORS = table.concat(g, " || ")
+"""
+
+GAME_FONTS = "Fonts\\FRIZQT__.TTF Fonts\\FRIZQT__.TTF Fonts\\FRIZQT___CYR.TTF Fonts\\2002B.TTF Fonts\\ARKai_T.ttf"
+BLANK = "Interface\\AddOns\\OnAir\\Media\\OnAirBlank.ttf"
+OTHER = "Interface\\AddOns\\Other\\Name.ttf"
+
+
+def blank_login(toc, db, initial, missing=False):
+    lua, oa = load(toc, db)
+    lua.execute(BLANK_LOGIN, oa, initial, missing)
+    g = lua.globals()
+    if g.ERRORS:
+        raise RuntimeError("errors caught by the guard: " + g.ERRORS)
+    return {k: g[k] for k in ("AT_LOAD", "AT_ENTER", "AFTER", "STATE", "NOW", "SAID")}
+
+
+def blank_checks(toc):
+    """The blank name font through logins and /reloads, each a fresh game with its saved variables."""
+    every = " ".join([BLANK] * 5)
+    on = blank_login(toc, "{ blankNames = true }", True)
+    reload_on = blank_login(toc, "{ blankNames = true }", False)
+    reload_off = blank_login(toc, "{ blankNames = false, blankNamesNow = true }", False)
+    login_off = blank_login(toc, "{ blankNames = false, blankNamesNow = true }", True)
+    missing = blank_login(toc, "{ blankNames = true }", True, True)
+    default = blank_login(toc, "{}", True)
+    return [
+        (on["AT_LOAD"] == every and on["AT_ENTER"] == every and on["STATE"] == "on" and on["NOW"] is True
+         and not on["SAID"], "blank name font on: the game gets it at login, over another addon's name font too"),
+        (on["AFTER"] == " ".join([BLANK, BLANK, OTHER, BLANK, BLANK]), "blank name font: nothing set after the login"),
+        (reload_on["STATE"] == "on-next" and reload_on["NOW"] is None,
+         "blank name font switched on, then only a /reload: still waits for a logout"),
+        (reload_off["AT_LOAD"] == GAME_FONTS and BLANK not in reload_off["AT_ENTER"] and reload_off["STATE"] == "off-next"
+         and reload_off["NOW"] is True, "blank name font switched off, /reload: fonts untouched, names hidden until a logout"),
+        (login_off["AT_LOAD"] == GAME_FONTS and BLANK not in login_off["AFTER"] and login_off["STATE"] == "off"
+         and login_off["NOW"] is None, "blank name font switched off, then a logout: off"),
+        (missing["AT_LOAD"] == GAME_FONTS and BLANK not in missing["AFTER"] and missing["STATE"] == "on-next"
+         and missing["SAID"].count("missing") == 1, "blank name font file missing: the game keeps its own, said once"),
+        (default["AT_LOAD"] == GAME_FONTS and BLANK not in default["AFTER"] and default["STATE"] == "off",
+         "blank name font off by default: the game's name fonts untouched"),
+    ]
 
 
 if __name__ == "__main__":
@@ -885,9 +1233,16 @@ if __name__ == "__main__":
                     (results["LIVE_DRAG"], "Deck sticks to a guide while dragged; its buttons are locked"),
                     (results["METER_SWEEP"], "meter rows named before going live get masked, and restored after"),
                     (results["LEARNED_GUARD"], "any frame that showed a name hides it while it's secret (other addons' raid frames)"),
+                    (results["METER_ALIAS_OK"], "meter rows in combat: your row and remembered players read as their alias"),
+                    (results["OVERHEAD_OK"], "names above heads: name-only plates while live, off in instances, your settings back after"),
+                    (results["BLANK_PAGE_OK"], "blank name font: the Hide page says where it stands; switching it in a session sets nothing"),
+                    (results["STREAM_LEFT"], "stream chat lines start on the left (after its font is applied)"),
+                    (results["PET_OK"], "a stranger's pet: its tooltip reads its owner's alias, not the pet's or owner's name"),
+                    (results["REVIEW_OK"], "late guild names, places, possessives and notes reach text on screen; login roster, joined community, chat after going live"),
+                    (results["PERF_OK"], "work stays small: lists read at most every few seconds, each new plate once, a chat line once"),
                     (results["NOTES_OK"], "friend and guild notes are emptied while live (whole label only), back after"),
                     (results["AUDIT_OK"], "audit fixes: strangers by realm, cut names, saved data, secret labels, whispers; text boxes untouched"),
-                    (results["CAST_OK"], "a pooled nameplate's cast target is hidden as soon as it gets text"),
+                    (results["CAST_OK"], "cast targets: alias when readable or the mob targets you, hidden otherwise (pooled plates too)"),
                     (results["TAG_OK"], "a friend's BattleTag without its number is masked (EllesmereUI friends tooltip)"),
                     (results["LATE_OK"], "names learned late reach text already on screen (guild message)"),
                     (results["ALLY_OK"], "recent allies (friends window, Recent tab) are masked"),
@@ -901,6 +1256,15 @@ if __name__ == "__main__":
                     failures += 0 if ok else 1
         except Exception as e:  # noqa: BLE001
             print(label, "ERROR:", e)
+            failures += 1
+    for label, toc in (("Retail", 120100), ("Forever", 16001)):
+        try:
+            print(label, "/ logins")
+            for ok, what in blank_checks(toc):
+                print(f"  {'ok  ' if ok else 'FAIL'} {what}")
+                failures += 0 if ok else 1
+        except Exception as e:  # noqa: BLE001
+            print(label, "logins ERROR:", e)
             failures += 1
     print("ui smoke:", "clean" if failures == 0 else f"{failures} failure(s)")
     sys.exit(1 if failures else 0)

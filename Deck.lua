@@ -4,7 +4,7 @@ local _, OA = ...
 -- hangs off the world frame, not the UI), camera presets, orbit, mark a moment, edit the layout,
 -- the console. Drag it anywhere; near an edge it sticks flush to it (vertical on the sides), near
 -- two edges into the corner. It can stay put, fade after a moment, or tuck into its edge, leaving
--- a small tab with an arrow. Rest the mouse on a button for a second and a small panel opens
+-- a small handle (with the on-air state). Rest the mouse on a button for a second and a small panel opens
 -- with the settings worth changing mid-recording (orbit speed, camera preset, ...).
 OA.Deck = {}
 
@@ -15,7 +15,8 @@ local L = OA.L
 local Utils = OA.Utils
 
 local SNAP = 40      -- how close to an edge counts as "at" it
-local TAB = 14       -- what stays on screen when tucked
+local TAB = 16       -- the handle a tucked Deck leaves on screen: how thick
+local OVER = 4       -- how far a face draws past the Deck (corner brackets): tucked away too
 
 local deck, face, tab, buttons
 local faces = {}     -- skin key -> the Deck's face in that skin
@@ -155,7 +156,7 @@ local function Place()
     -- Tucked: slide out of the screen along the docked edge.
     local hide = tucked
     if hide > 0 and db.edge then
-        local depth = (Vertical() and w or h) - TAB
+        local depth = (Vertical() and w or h) + OVER
         if db.edge == "LEFT" then
             x = x - depth * hide
         elseif db.edge == "RIGHT" then
@@ -167,6 +168,61 @@ local function Place()
         end
     end
     deck:SetPoint(pos.point or "BOTTOMLEFT", WorldFrame, pos.point or "BOTTOMLEFT", x, y)
+end
+
+-- The handle: a small piece at the middle of the Deck's inner side, so it stays on screen when
+-- the Deck itself is tucked out of it. An arrow, then (if wanted) a dot in the broadcast's color
+-- and its word (not on a side edge: no room for a word there).
+local function ArrangeTab()
+    local db = DB()
+    local edge, vertical = db.edge, Vertical()
+    local status = db.tabStatus ~= false
+    local state = OA.live and (OA.rehearsal and "preview" or "live") or "off"
+    local color = state == "live" and C.red or (state == "preview" and C.amber or C.muted)
+    tab.dot:SetShown(status)
+    tab.dot:SetVertexColor(unpack(color))
+    local word = status and not vertical
+    tab.word:SetShown(word)
+    tab.word:SetText(word and Kit.Word(state) or "")
+    tab.word:SetTextColor(unpack(state == "off" and C.muted or C.text))
+    Kit.SetBorderColor(tab.edges, (status and state ~= "off") and color or C.line)
+    -- Along the handle: arrow, dot, word.
+    local parts = { { tab.arrow, 10 } }
+    if status then
+        parts[#parts + 1] = { tab.dot, 6 }
+    end
+    if word then
+        parts[#parts + 1] = { tab.word, math.ceil(tab.word:GetStringWidth()) }
+    end
+    local at = 6
+    for i, part in ipairs(parts) do
+        part[1]:ClearAllPoints()
+        if vertical then
+            part[1]:SetPoint("TOP", tab, "TOP", 0, -at)
+        else
+            part[1]:SetPoint("LEFT", tab, "LEFT", at, 0)
+        end
+        at = at + part[2] + (i < #parts and 5 or 0)
+    end
+    local length = at + 6
+    tab:ClearAllPoints()
+    if edge == "LEFT" then
+        tab:SetPoint("LEFT", deck, "RIGHT", OVER, 0)
+        tab:SetSize(TAB, length)
+        tab.arrow:SetRotation(math.rad(90))
+    elseif edge == "RIGHT" then
+        tab:SetPoint("RIGHT", deck, "LEFT", -OVER, 0)
+        tab:SetSize(TAB, length)
+        tab.arrow:SetRotation(math.rad(-90))
+    elseif edge == "TOP" then
+        tab:SetPoint("TOP", deck, "BOTTOM", 0, -OVER)
+        tab:SetSize(length, TAB)
+        tab.arrow:SetRotation(0)
+    else
+        tab:SetPoint("BOTTOM", deck, "TOP", 0, OVER)
+        tab:SetSize(length, TAB)
+        tab.arrow:SetRotation(math.rad(180))
+    end
 end
 
 local function Layout()
@@ -210,29 +266,7 @@ local function Layout()
     if face.Arrange then
         face.Arrange(vertical)
     end
-    tab:ClearAllPoints()
-    local edge = DB().edge
-    if edge == "LEFT" then
-        tab:SetPoint("TOPRIGHT")
-        tab:SetPoint("BOTTOMRIGHT")
-        tab:SetWidth(TAB)
-        tab.arrow:SetRotation(math.rad(90))
-    elseif edge == "RIGHT" then
-        tab:SetPoint("TOPLEFT")
-        tab:SetPoint("BOTTOMLEFT")
-        tab:SetWidth(TAB)
-        tab.arrow:SetRotation(math.rad(-90))
-    elseif edge == "TOP" then
-        tab:SetPoint("BOTTOMLEFT")
-        tab:SetPoint("BOTTOMRIGHT")
-        tab:SetHeight(TAB)
-        tab.arrow:SetRotation(0)
-    else
-        tab:SetPoint("TOPLEFT")
-        tab:SetPoint("TOPRIGHT")
-        tab:SetHeight(TAB)
-        tab.arrow:SetRotation(math.rad(180))
-    end
+    ArrangeTab()
     Place()
 end
 
@@ -303,7 +337,7 @@ local function Watch(_, elapsed)
         SetTucked(0)
         return
     end
-    if deck:IsMouseOver(8, -8, -8, 8) or Deck.PanelOpen() then
+    if deck:IsMouseOver(8, -8, -8, 8) or Deck.PanelOpen() or (tucked > 0.5 and tab:IsMouseOver(4, -4, -4, 4)) then
         idle = 0
         SetAlphaTo(1)
         SetTucked(0)
@@ -701,6 +735,7 @@ local function Paint()
         state.on[spec.key] = ok and on and true or false
     end
     face.Paint(state)
+    ArrangeTab()
 end
 
 local function StartDrag()

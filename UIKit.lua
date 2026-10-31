@@ -343,6 +343,11 @@ function Kit.Tween(key, from, to, duration, apply, ease, delay)
     driver:SetScript("OnUpdate", Drive)
 end
 
+-- Drops a running tween: the next one on this key starts from its own start, not mid-way.
+function Kit.StopTween(key)
+    tweens[key] = nil
+end
+
 local function Mix(a, b, p)
     return a[1] + (b[1] - a[1]) * p, a[2] + (b[2] - a[2]) * p, a[3] + (b[3] - a[3]) * p, (a[4] or 1) + ((b[4] or 1) - (a[4] or 1)) * p
 end

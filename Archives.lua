@@ -34,12 +34,9 @@ local function Learn(full, kind)
     Names.AddFull(full, kind)
 end
 
--- Walks a saved table (depth and size limited) for character records.
-local function Walk(t, kind, depth, seen, budget)
-    budget.left = budget.left - 1
-    if budget.left < 0 then
-        return
-    end
+-- One saved table: its character records, and the tables inside it (put on the stack, to look at
+-- next).
+local function Scan(t, kind, depth, seen, stack)
     local name, realm
     for k, v in pairs(t) do
         local tv = type(v)
@@ -63,7 +60,8 @@ local function Walk(t, kind, depth, seen, budget)
             end
             if depth > 0 and not seen[v] then
                 seen[v] = true
-                Walk(v, kind, depth - 1, seen, budget)
+                stack[#stack + 1] = v
+                stack[#stack + 1] = depth - 1
             end
         end
     end
@@ -76,10 +74,24 @@ local function Walk(t, kind, depth, seen, budget)
     end
 end
 
+-- Walks a saved table (depth and size limited), a slice per frame. Each table is read whole and
+-- the walk pauses only between tables: the other addons keep writing to theirs while you play, and
+-- a pause in the middle of one could lose its place. One odd table can't stop the rest.
+local function Walk(root, kind)
+    local stack, seen, left = { root, 9 }, { [root] = true }, 40000
+    while stack[1] ~= nil and left > 0 do
+        local depth = table.remove(stack)
+        local t = table.remove(stack)
+        left = left - 1
+        pcall(Scan, t, kind, depth, seen, stack)
+        Utils.Pause()
+    end
+end
+
 local function Read(global, kind)
     local t = _G[global]
     if type(t) == "table" then
-        Walk(t, kind, 9, { [t] = true }, { left = 40000 })
+        Walk(t, kind)
     end
 end
 
@@ -89,13 +101,14 @@ local MINE = { "AlterEgoDB", "PrioWarbandDB", "NarciCharacterProfiles", "NarciBa
 local OTHERS = { "EllesmereUIMythicRunsDB", "MPlusCoachGlobalDB", "MPlusCoachDB", "WhisperMessengerDB",
     "WhisperMessengerCharacterDB", "EllesmereUIChatScrollDB" }
 
+-- Runs inside the go-live job, a slice per frame (so no pcall around it: a pause can't cross one).
 function Archives.Read()
     -- Every character of yours OnAir has seen, also the ones you're not playing now.
     for key in pairs(OA.db.myChars) do
         Names.AddFull(key, "me")
     end
     for _, global in ipairs(MINE) do
-        Utils.Guard("archive " .. global, Read)(global, "me")
+        Read(global, "me")
     end
     local api = _G.Syndicator and _G.Syndicator.API
     if api then
@@ -114,6 +127,6 @@ function Archives.Read()
         end)()
     end
     for _, global in ipairs(OTHERS) do
-        Utils.Guard("archive " .. global, Read)(global, "other")
+        Read(global, "other")
     end
 end

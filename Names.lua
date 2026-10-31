@@ -21,6 +21,7 @@ local RANK = { me = 4, crew = 3, friend = 2, pet = 2, other = 1 }
 local WHO = { me = "me", crew = "crew", other = "others", friend = "friends", pet = "pets" }
 
 local people = {}       -- key -> person
+local peopleCount = 0
 local words = {}        -- a name as it appears in text -> alias
 local wordRank = {}     -- word -> rank of the person who holds it
 local aliasStarts = {}  -- first word of an alias -> { alias, ... } (so aliases are never rewritten)
@@ -30,6 +31,7 @@ local tokens = {}       -- Battle.net |K..|k name token -> alias
 local used = {}         -- alias -> true
 local realOf = {}       -- alias -> who it stands for ("Name-Realm", or a Battle.net name token)
 local cache, cacheSize = {}, 0
+local cacheStale = false
 local customLower = {}
 
 local function DB()
@@ -50,9 +52,50 @@ function Names.TakeNewWords()
     return list
 end
 
+-- How text is cut into words for that: a run starting with a letter ("Bob's", "Name-Realm"), and
+-- only the ones that can be a name (a capital, or a letter outside plain ASCII). Hide indexes the
+-- labels on screen the same way.
+local WORD = "[%a\128-\255][%w\128-\255'%-]*"
+Names.WORD = WORD
+
+local function IndexWord(word)
+    local first = word:byte(1)
+    return #word >= 2 and (first >= 128 or (first >= 65 and first <= 90))
+end
+Names.IsIndexWord = IndexWord
+
+-- A guild, community, BattleTag or place learned while live: its words count as new too, so text
+-- already on screen that holds it is looked at again.
+local function NewWordsOf(text)
+    if not OA.live then
+        return
+    end
+    for word in text:gmatch(WORD) do
+        if IndexWord(word) then
+            newWords[#newWords + 1] = word
+        end
+    end
+end
+
+-- Words starting the same (first 3 bytes), for a name cut short with "..." (see Shortened).
+local byStart = {}
+
+local function IndexStart(word)
+    if #word >= 3 then
+        local head = word:sub(1, 3)
+        local list = byStart[head]
+        if not list then
+            list = {}
+            byStart[head] = list
+        end
+        list[#list + 1] = word
+    end
+end
+
+-- Something a text could be scrubbed with changed. The cache is emptied on the next scrub, not
+-- here: going live or reading a guild learns hundreds of names in a row.
 local function Changed()
-    wipe(cache)
-    cacheSize = 0
+    cacheStale = true
     if Names.OnChanged then
         Names.OnChanged()
     end
@@ -74,6 +117,15 @@ Names.SafeBool = SafeBool
 
 local SEP = Utils.SurnameSeparator()
 
+-- Asked once it's known (before login the game may not have it yet).
+local myRealm
+local function MyRealm()
+    if not myRealm then
+        myRealm = Utils.MyRealm()
+    end
+    return myRealm
+end
+
 -- A person's key: "Name-Realm" on Retail, "First Surname" on Forever (or just the first name
 -- while the second part isn't known).
 local function MakeKey(first, second)
@@ -83,7 +135,7 @@ local function MakeKey(first, second)
         end
         return first
     end
-    local realm = IsPlain(second) and second or Utils.MyRealm()
+    local realm = IsPlain(second) and second or MyRealm()
     if realm then
         return first .. "-" .. realm
     end
@@ -134,6 +186,9 @@ local function Fill(template, n, person)
         elseif token == "class" then
             return person and person.class or L["Adventurer"]
         elseif token == "owner" then
+            if person and person.ownerAlias then
+                return person.ownerAlias
+            end
             local owner = person and person.owner and people[person.owner]
             return owner and owner.alias or L["Someone"]
         end
@@ -242,7 +297,11 @@ local function PutWord(word, alias, rank)
         return false
     end
     if words[word] == nil then
-        newWords[#newWords + 1] = word
+        IndexStart(word)
+        -- For Hide's late fix (text shown before the name was known); only while live.
+        if OA.live then
+            newWords[#newWords + 1] = word
+        end
     end
     words[word] = alias
     wordRank[word] = rank
@@ -301,6 +360,7 @@ function Names.Add(first, second, kind, info)
     else
         person = { key = key, first = first, kind = kind }
         people[key] = person
+        peopleCount = peopleCount + 1
     end
     if info then
         person.class = info.class or person.class
@@ -355,27 +415,59 @@ end
 -- whose whole text is a note is emptied while live; a note is never matched inside other text,
 -- so a short note like "tank" doesn't eat that word everywhere.
 local notes = {}
+local notesNew = false   -- a note learned while live (Hide looks the screen over again)
+local noteSeen = {}      -- raw note text -> true (rosters are read again and again)
+local noteCache, noteCacheSize = {}, 0
+local NOTE_CACHE_LIMIT = 2000
 
 local function NoteKey(text)
     return (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
 function Names.AddNote(text)
-    if IsPlain(text) then
-        local key = NoteKey(text)
-        if key ~= "" then
-            notes[key] = true
+    if not IsPlain(text) or noteSeen[text] then
+        return
+    end
+    noteSeen[text] = true
+    local key = NoteKey(text)
+    if key ~= "" and not notes[key] then
+        notes[key] = true
+        wipe(noteCache)
+        noteCacheSize = 0
+        if OA.live then
+            notesNew = true
+            if Names.OnChanged then
+                Names.OnChanged()
+            end
         end
     end
 end
 
+function Names.TakeNotesNew()
+    local new = notesNew
+    notesNew = false
+    return new
+end
+
+-- Asked for every text the UI sets while live, so the answer for a text is kept.
 function Names.IsNote(text)
     if not IsPlain(text) or not next(notes) then
         return false
     end
+    local hit = noteCache[text]
+    if hit ~= nil then
+        return hit
+    end
     local key = NoteKey(text)
     -- Also "Note: ..." and the like: a short label in front of the note.
-    return notes[key] == true or notes[key:match("^[^:]+:%s*(.+)$") or ""] == true
+    local found = notes[key] == true or notes[key:match("^[^:]+:%s*(.+)$") or ""] == true
+    if noteCacheSize >= NOTE_CACHE_LIMIT then
+        wipe(noteCache)
+        noteCacheSize = 0
+    end
+    noteCache[text] = found
+    noteCacheSize = noteCacheSize + 1
+    return found
 end
 
 -- Multi-word names (guilds, BattleTags, communities) for /onair check.
@@ -446,10 +538,70 @@ local function AddPet(unit, ownerUnit)
     if not person then
         person = { key = key, first = name, kind = "pet", owner = owner.key }
         people[key] = person
+        peopleCount = peopleCount + 1
         if Publish(person) then
             Changed()
         end
     end
+end
+
+-- "Jennie's Minion": the owner line under a pet's name (its tooltip), in the game's own words for
+-- every language. The owner part is taken whole: it can be the real name or, when the line was
+-- masked first, the owner's alias already.
+local ownerPatterns
+local OWNER_TITLES = { "UNITNAME_TITLE_PET", "UNITNAME_TITLE_MINION", "UNITNAME_TITLE_GUARDIAN", "UNITNAME_TITLE_CHARM",
+    "UNITNAME_TITLE_COMPANION", "UNITNAME_TITLE_CREATION", "UNITNAME_TITLE_SQUIRE", "UNITNAME_TITLE_OPPONENT" }
+
+local function OwnerPatterns()
+    if ownerPatterns then
+        return ownerPatterns
+    end
+    ownerPatterns = {}
+    local formats = {}
+    for _, global in ipairs(OWNER_TITLES) do
+        formats[#formats + 1] = _G[global]
+    end
+    for i = 1, 30 do
+        formats[#formats + 1] = _G["UNITNAME_SUMMON_TITLE" .. i]
+    end
+    for _, format in ipairs(formats) do
+        if type(format) == "string" and format:find("%s", 1, true) then
+            local plain = format:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+            local pattern = plain:gsub("[%(%)%.%+%-%*%?%[%]%^%$]", "%%%0"):gsub("%%s", function() return "(.-)" end)
+            ownerPatterns[#ownerPatterns + 1] = "^<?" .. pattern .. ">?$"
+        end
+    end
+    return ownerPatterns
+end
+
+-- The owner a pet's line names ("Jennie's Minion" -> "Jennie"), or nil.
+function Names.OwnerIn(text)
+    if not IsPlain(text) then
+        return nil
+    end
+    local line = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    for _, pattern in ipairs(OwnerPatterns()) do
+        local owner = line:match(pattern)
+        if owner then
+            return owner
+        end
+    end
+    return nil
+end
+
+-- What a pet reads as when its own name isn't learned (a stranger's demon): "{owner}'s Pet", the
+-- owner by their alias (learned here when it's their real name).
+function Names.PetLabel(owner)
+    local alias
+    if IsPlain(owner) then
+        if used[owner] then
+            alias = owner
+        else
+            local person = Names.AddFull(owner, "other")
+            alias = person and person.alias
+        end
+    end
+    return Fill(DB().petTemplate, 0, { kind = "pet", ownerAlias = alias })
 end
 
 -- Learns the player behind a unit token. Returns the person.
@@ -474,6 +626,19 @@ function Names.AddUnit(unit)
     elseif SafeBool(UnitInParty, unit) or SafeBool(UnitInRaid, unit) then
         kind = "crew"
     end
+    -- Known already, as this kind or more, with the class read: only the group role can change.
+    local realm = second
+    if IsSecret(realm) then
+        realm = nil
+    end
+    local known = people[MakeKey(first, realm)]
+    if known and known.class and RANK[kind] <= RANK[known.kind] then
+        local role = SafeBool(UnitGroupRolesAssigned, unit)
+        if role and role ~= "NONE" then
+            known.role = role
+        end
+        return known
+    end
     return Names.Add(first, second, kind, UnitInfo(unit))
 end
 
@@ -483,12 +648,58 @@ end
 
 ---------------------------------------------------------------------------------------------- phrases
 
+-- Sorted (longest first) and split the next time a text is scrubbed, not on every new phrase.
+-- BattleTags (most phrases: one per friend) are looked up by their "#1234" in the text instead of
+-- being searched for one by one.
+local phrasesStale = false
+local tagPhrases = {}    -- "#1234" -> { phrase, ... } longest first
+local otherPhrases = {}  -- guilds, communities, places: longest first
+
 local function SortPhrases()
-    table.sort(phrases, function(a, b) return #a.text > #b.text end)
+    phrasesStale = true
 end
 
-local function AddPhrase(text, alias)
+local function Longer(a, b)
+    return #a.text > #b.text
+end
+
+local function SplitPhrases()
+    phrasesStale = false
+    table.sort(phrases, Longer)
+    wipe(tagPhrases)
+    wipe(otherPhrases)
+    for _, p in ipairs(phrases) do
+        local tag = p.text:match("#%d+$")
+        if tag then
+            local list = tagPhrases[tag]
+            if not list then
+                list = {}
+                tagPhrases[tag] = list
+            end
+            list[#list + 1] = p
+        else
+            otherPhrases[#otherPhrases + 1] = p
+        end
+    end
+end
+
+-- One-word names of other guilds and of communities ("Progress", "Legacy") are everyday words
+-- too: those are replaced only where the whole text is the name (a guild line, "<Progress>",
+-- "Progress-Realm"), never inside other text ("Raider.IO Raid Progress").
+local wholeNames = {}   -- name -> alias
+
+local function AddPhrase(text, alias, wholeOnly)
     if not IsPlain(text) or #text < 3 then
+        return
+    end
+    if wholeOnly and not text:find("%s") then
+        if wholeNames[text] == alias then
+            return
+        end
+        wholeNames[text] = alias
+        AddAliasStart(alias)
+        NewWordsOf(text)
+        Changed()
         return
     end
     local existing = phraseByText[text]
@@ -504,6 +715,7 @@ local function AddPhrase(text, alias)
         SortPhrases()
     end
     AddAliasStart(alias)
+    NewWordsOf(text)
     Changed()
 end
 
@@ -527,7 +739,8 @@ function Names.AddGuild(name, mine)
         end
         used[alias] = true
     end
-    AddPhrase(name, alias)
+    -- Your own guild is replaced everywhere; one-word names of other guilds only on their own.
+    AddPhrase(name, alias, not mine)
 end
 
 -- A Battle.net friend: the account's name token, its BattleTag and the character it plays all
@@ -541,6 +754,7 @@ function Names.AddBNet(accountID, token, battleTag, characterFull)
     if not person then
         person = { key = key, first = key, kind = "friend" }
         people[key] = person
+        peopleCount = peopleCount + 1
         person.alias = AliasFor(person)
         used[person.alias] = true
         AddAliasStart(person.alias)
@@ -586,7 +800,15 @@ function Names.AddOwnBattleTag(tag)
 end
 
 -- Places to keep off screen (Shield: your zone and subzone while live). They read "Somewhere".
+local placesNow = ""
+
 function Names.SetHiddenPlaces(list)
+    -- Zone events come often (every subzone): only a real change rebuilds anything.
+    local sig = table.concat(list, "\001")
+    if sig == placesNow then
+        return
+    end
+    placesNow = sig
     for i = #phrases, 1, -1 do
         if phrases[i].place then
             phraseByText[phrases[i].text] = nil
@@ -599,6 +821,7 @@ function Names.SetHiddenPlaces(list)
             local entry = { text = text, alias = alias, place = true }
             phraseByText[text] = entry
             phrases[#phrases + 1] = entry
+            NewWordsOf(text)
         end
     end
     SortPhrases()
@@ -643,7 +866,7 @@ function Names.AddCommunity(name)
         db.assignedKind[key] = "other"
     end
     used[alias] = true
-    AddPhrase(name, alias)
+    AddPhrase(name, alias, true)
 end
 
 ---------------------------------------------------------------------------------------------- scrub
@@ -651,24 +874,41 @@ end
 local CACHE_LIMIT = 4000
 local PH_OPEN, PH_CLOSE = "\001", "\002"
 
-local function ReplacePhrases(s, held)
-    for i = 1, #phrases do
-        local p = phrases[i]
-        if s:find(p.text, 1, true) then
-            local parts, last = {}, 1
-            while true do
-                local a, b = s:find(p.text, last, true)
-                if not a then
-                    break
-                end
-                parts[#parts + 1] = s:sub(last, a - 1)
-                held[#held + 1] = p.alias
-                parts[#parts + 1] = PH_OPEN .. #held .. PH_CLOSE
-                last = b + 1
-            end
-            parts[#parts + 1] = s:sub(last)
-            s = table.concat(parts)
+local function ReplaceOne(s, p, held)
+    if not s:find(p.text, 1, true) then
+        return s
+    end
+    local parts, last = {}, 1
+    while true do
+        local a, b = s:find(p.text, last, true)
+        if not a then
+            break
         end
+        parts[#parts + 1] = s:sub(last, a - 1)
+        held[#held + 1] = p.alias
+        parts[#parts + 1] = PH_OPEN .. #held .. PH_CLOSE
+        last = b + 1
+    end
+    parts[#parts + 1] = s:sub(last)
+    return table.concat(parts)
+end
+
+local function ReplacePhrases(s, held)
+    if phrasesStale then
+        SplitPhrases()
+    end
+    if next(tagPhrases) and s:find("#", 1, true) then
+        for tag in s:gmatch("#%d+") do
+            local list = tagPhrases[tag]
+            if list then
+                for i = 1, #list do
+                    s = ReplaceOne(s, list[i], held)
+                end
+            end
+        end
+    end
+    for i = 1, #otherPhrases do
+        s = ReplaceOne(s, otherPhrases[i], held)
     end
     return s
 end
@@ -693,6 +933,7 @@ end
 -- ("<Made by %s>"), a gift's sender, a letter's writer. Built from the game's own text (so every
 -- language works), without color codes; the name in them is learned on the spot.
 local creatorPatterns
+local creatorHeads = {}  -- the plain text before the name ("<Made by "), looked for first
 local CREATOR_FORMATS = { "ITEM_CREATED_BY", "ITEM_WRAPPED_BY", "ITEM_WRITTEN_BY", "ITEM_SIGNED_BY" }
 
 local function CreatorPatterns()
@@ -709,14 +950,16 @@ local function CreatorPatterns()
                 pattern = pattern:sub(1, -5) .. "(.+)$"
             end
             creatorPatterns[#creatorPatterns + 1] = pattern
+            creatorHeads[#creatorPatterns] = format:match("^(.-)%%s") or ""
         end
     end
     return creatorPatterns
 end
 
 local function LearnCreators(s)
-    for _, pattern in ipairs(CreatorPatterns()) do
-        local name = s:match(pattern)
+    for i, pattern in ipairs(CreatorPatterns()) do
+        local head = creatorHeads[i]
+        local name = (head == "" or s:find(head, 1, true)) and s:match(pattern)
         if name then
             name = name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
             if IsPlain(name) and #name > 1 and not used[name] then
@@ -726,10 +969,35 @@ local function LearnCreators(s)
     end
 end
 
+-- A text that is only a one-word guild or community name (see wholeNames): the name (and a
+-- "-Realm" after it) replaced in place, colors and brackets kept. Nil for anything else.
+local function WholeName(text)
+    if not next(wholeNames) or #text > 80 then
+        return nil
+    end
+    local core = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    core = core:match("^%s*<?%s*(.-)%s*>?%s*$") or core
+    local name = core
+    local alias = wholeNames[name]
+    if not alias then
+        name = core:match("^(.-)%-[^%-%s]+$")
+        alias = name and wholeNames[name]
+    end
+    if not alias then
+        return nil
+    end
+    local first, last = text:find(name, 1, true)
+    if not first then
+        return nil
+    end
+    local _, realmEnd = text:find("^%-[^%-%s|>]+", last + 1)
+    return text:sub(1, first - 1) .. alias .. text:sub((realmEnd or last) + 1)
+end
+
 local function ScrubRaw(s)
     LearnCreators(s)
     local held = {}
-    if #phrases > 0 then
+    if phrases[1] then
         s = ReplacePhrases(s, held)
     end
     local len = #s
@@ -812,13 +1080,18 @@ end
 -- "Name (Realm)" with one of these is a player, even one OnAir never met: a Raider.IO search, an
 -- auction seller, a "sent by" line. It's learned on the spot and replaced like any other.
 local realms = {}
+local realmSeen = {}
 
 local function RealmKey(realm)
     return (realm:gsub("[%s'%-]", "")):lower()
 end
 
 function Names.AddRealm(realm)
-    if IsPlain(realm) and #realm >= 3 then
+    if not IsPlain(realm) or realmSeen[realm] then
+        return
+    end
+    realmSeen[realm] = true
+    if #realm >= 3 then
         realms[RealmKey(realm)] = true
     end
 end
@@ -850,13 +1123,14 @@ end
 
 -- "Thrallbro…": a known name cut short to fit (WhisperMessenger, EllesmereUI) reads as its alias.
 local ELLIPSIS = "\226\128\166"
+local EMPTY = {}
 
 local function Shortened(s)
     return (s:gsub("([%a\128-\255][%w\128-\255]+)" .. ELLIPSIS, function(prefix)
         if #prefix >= 3 and Capital(prefix) and not words[prefix] then
-            for word, alias in pairs(words) do
-                if #word > #prefix and word:sub(1, #prefix) == prefix then
-                    return alias
+            for _, word in ipairs(byStart[prefix:sub(1, 3)] or EMPTY) do
+                if #word > #prefix and word:sub(1, #prefix) == prefix and words[word] then
+                    return words[word]
                 end
             end
         end
@@ -867,21 +1141,28 @@ function Names.Scrub(text)
     if type(text) ~= "string" or IsSecret(text) or text == "" then
         return text
     end
+    if cacheStale then
+        wipe(cache)
+        cacheSize = 0
+        cacheStale = false
+    end
     local hit = cache[text]
     if hit then
         return hit
     end
-    LearnStrangers(text)
-    hit = cache[text]
-    if hit then
-        return hit
+    -- Numbers, timers, percentages: no name in there, and not worth a place in the cache.
+    if not text:find("[%a\128-\255|]") then
+        return text
     end
-    local out = text
-    if text:find("[%a\128-\255|]") then
-        out = ScrubRaw(text)
-        if out:find(ELLIPSIS, 1, true) then
-            out = Shortened(out)
-        end
+    LearnStrangers(text)
+    if cacheStale then
+        wipe(cache)
+        cacheSize = 0
+        cacheStale = false
+    end
+    local out = WholeName(text) or ScrubRaw(text)
+    if out:find(ELLIPSIS, 1, true) then
+        out = Shortened(out)
     end
     if cacheSize >= CACHE_LIMIT then
         wipe(cache)
@@ -921,6 +1202,10 @@ function Names.Rebuild(reshuffle)
     wipe(tokens)
     wipe(phrases)
     wipe(phraseByText)
+    wipe(wholeNames)
+    wipe(byStart)
+    placesNow = ""
+    SortPhrases()
     for _, alias in pairs(db.assigned) do
         used[alias] = true
     end
@@ -988,9 +1273,5 @@ function Names.Sample(kind, n, seed)
 end
 
 function Names.Count()
-    local n = 0
-    for _ in pairs(people) do
-        n = n + 1
-    end
-    return n
+    return peopleCount
 end

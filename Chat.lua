@@ -46,19 +46,24 @@ end
 -- Players in "|Hplayer:Name|h[Name]|h" links are learned, so the visible [Name] becomes the alias.
 -- The link's data keeps the real name (unseen), so clicking it still whispers the right player.
 local function LearnLinks(msg)
+    if not msg:find("|Hplayer:", 1, true) then
+        return
+    end
     for name in msg:gmatch("|Hplayer:([^:|]+)") do
         Names.AddFull(name, KindOf(name))
     end
+end
+
+local function ScrubMessage(msg)
+    LearnLinks(msg)
+    return Names.Scrub(msg)
 end
 
 local function Scrub(msg)
     if type(msg) ~= "string" or IsSecret(msg) then
         return msg
     end
-    local ok, out = pcall(function()
-        LearnLinks(msg)
-        return Names.Scrub(msg)
-    end)
+    local ok, out = pcall(ScrubMessage, msg)
     return ok and out or msg
 end
 
@@ -66,28 +71,66 @@ end
 -- it came, and the error is reported once.
 local filterReported = false
 
-local function Pack(ok, ...)
-    return ok, select("#", ...), { ... }
+local function Settle(ok, ...)
+    if ok then
+        return ...
+    end
+    if not filterReported then
+        filterReported = true
+        local handler = geterrorhandler and geterrorhandler()
+        if handler then
+            pcall(handler, "OnAir (chat filter): " .. tostring((...)))
+        end
+    end
+    return false
 end
 
 local function SafeFilter(fn)
     return function(...)
-        local ok, n, results = Pack(pcall(fn, ...))
-        if ok then
-            return unpack(results, 1, n)
-        end
-        if not filterReported then
-            filterReported = true
-            local handler = geterrorhandler and geterrorhandler()
-            if handler then
-                pcall(handler, "OnAir (chat filter): " .. tostring(results[1]))
-            end
-        end
-        return false
+        return Settle(pcall(fn, ...))
     end
 end
 
-local function Filter(_, event, msg, author, ...)
+-- Every chat window runs the filters for the same line: the answer is worked out once (and a
+-- held whisper stored once) and given again to the next window. A line is its line ID (argument
+-- 11) with the same message and sender, while live or not as before; hidden (secret) ones can't
+-- be compared, so never kept.
+local function PerLine(decide)
+    local lastEvent, lastLine, lastRawMsg, lastRawAuthor, lastLive, lastHeld, lastMsg, lastAuthor
+    return function(_, event, msg, author, ...)
+        local lineID = select(9, ...)
+        local live = OA.live == true
+        local keep = type(lineID) == "number" and not IsSecret(lineID) and lineID > 0
+            and not IsSecret(msg) and not IsSecret(author)
+        if keep and lineID == lastLine and event == lastEvent and msg == lastRawMsg and author == lastRawAuthor
+            and live == lastLive then
+            if lastHeld then
+                return true
+            end
+            if lastMsg == nil then
+                return false
+            end
+            return false, lastMsg, lastAuthor, ...
+        end
+        local held, newMsg, newAuthor = decide(event, msg, author, ...)
+        if keep then
+            lastEvent, lastLine, lastRawMsg, lastRawAuthor, lastLive = event, lineID, msg, author, live
+            lastHeld, lastMsg, lastAuthor = held, newMsg, newAuthor
+        else
+            lastLine = nil
+        end
+        if held then
+            return true
+        end
+        if newMsg == nil then
+            return false
+        end
+        return false, newMsg, newAuthor, ...
+    end
+end
+
+-- Held back (true), or the message and sender to show (nil: as they came).
+local function Decide(event, msg, author, ...)
     -- Shield first, while the sender is still the real name: strangers' whispers are held back.
     if OA.live and OA.Shield.HoldWhisper(event, msg, author, (select(10, ...))) then
         return true
@@ -95,7 +138,7 @@ local function Filter(_, event, msg, author, ...)
     if not Live() or IsSecret(author) or IsSecret(msg) then
         return false
     end
-    if NPC_SENDER[event] and OA.db.npc.mode ~= "real" and not IsSecret(author) then
+    if NPC_SENDER[event] and OA.db.npc.mode ~= "real" then
         author = event:find("BOSS") and OA.db.npc.boss or OA.db.npc.friendly
     elseif IsPlain(author) and not NPC_SENDER[event] then
         local person = Names.AddFull(author, KindOf(author))
@@ -103,11 +146,11 @@ local function Filter(_, event, msg, author, ...)
             author = person.alias
         end
     end
-    return false, Scrub(msg), author, ...
+    return false, Scrub(msg), author
 end
 
 -- Battle.net messages: the sender is a name token; the account ID (arg 13) leads to the alias.
-local function BNFilter(_, _, msg, author, ...)
+local function DecideBN(_, msg, author, ...)
     if not Live() or IsSecret(msg) then
         return false
     end
@@ -121,7 +164,7 @@ local function BNFilter(_, _, msg, author, ...)
     elseif type(author) == "string" and not IsSecret(author) then
         author = Names.Scrub(author)
     end
-    return false, Scrub(msg), author, ...
+    return false, Scrub(msg), author
 end
 
 -- The sender a message shows is the alias, so the game remembers the alias as who to reply to
@@ -232,7 +275,7 @@ function Chat.Start()
         return
     end
     started = true
-    local filter, bnFilter = SafeFilter(Filter), SafeFilter(BNFilter)
+    local filter, bnFilter = SafeFilter(PerLine(Decide)), SafeFilter(PerLine(DecideBN))
     for _, event in ipairs(EVENTS) do
         AddFilter("CHAT_MSG_" .. event, filter)
     end
@@ -259,15 +302,51 @@ end
 
 -- Empties every chat window, so lines from before going live (with real names) are gone.
 -- EllesmereUIChat brings back its saved history a moment after login, so it runs twice then.
-function Chat.ClearHistory()
+-- One frame: in combat some frames are locked (forbidden) and any call on them throws. True when
+-- it was a chat window.
+local function ClearOne(frame)
+    local forbidden = frame.IsForbidden and frame:IsForbidden()
+    if Utils.IsSecret(forbidden) or forbidden then
+        return false
+    end
+    if frame:GetObjectType() == "ScrollingMessageFrame" and frame ~= UIErrorsFrame and frame.Clear then
+        frame:Clear()
+        return true
+    end
+    return false
+end
+
+-- Chat windows found so far (Blizzard's and other addons'): cleared at once. The rest of the UI
+-- is looked over for more (tens of thousands of frames) a slice per frame.
+local chatFrames = {}
+
+local function Search()
     local frame = EnumerateFrames()
+    local n = 0
     while frame do
-        if not (frame.IsForbidden and frame:IsForbidden()) and frame.GetObjectType
-            and frame:GetObjectType() == "ScrollingMessageFrame" and frame ~= UIErrorsFrame and frame.Clear then
-            pcall(frame.Clear, frame)
+        local ok, cleared = pcall(ClearOne, frame)
+        if ok and cleared then
+            chatFrames[frame] = true
+        end
+        n = n + 1
+        if n % 200 == 0 then
+            Utils.Pause()
         end
         frame = EnumerateFrames(frame)
     end
+end
+
+function Chat.ClearHistory()
+    for i = 1, (NUM_CHAT_WINDOWS or 10) do
+        local frame = _G["ChatFrame" .. i]
+        if frame then
+            pcall(ClearOne, frame)
+        end
+    end
+    for frame in pairs(chatFrames) do
+        pcall(ClearOne, frame)
+    end
+    Utils.Job("clear chat", Search)
 end
 
 function Chat.OnGoLive(atLogin)

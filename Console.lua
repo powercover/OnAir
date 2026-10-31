@@ -299,8 +299,15 @@ local function Builder(f, page, top)
     function P.Button(spec)
         return P.Buttons({ spec })
     end
+    -- Text under the controls. Given as a function, it's asked again on each refresh (keep that
+    -- to one line: the page is laid out once).
     function P.Note(text, big)
-        return Put(skin.Note(body, text, width, big))
+        local live = type(text) == "function"
+        local note = Put(skin.Note(body, live and text() or text, width, big))
+        if live then
+            OnRefresh(function() note.text:SetText(text()) end)
+        end
+        return note
     end
     -- Anything a page draws itself (frame width: P.width).
     function P.Custom(frame, gap)
@@ -451,6 +458,21 @@ end
 
 ---------------------------------------------------------------------------------------------- hide page
 
+-- The blank name font: what a switch does, said in chat, and where it stands, on the page. The
+-- game only takes a change at the next login.
+local BLANK_SAYS = {
+    ["on-next"] = L["Blank name font on. Names above heads go away after you log out and back in (or restart the game). /reload is not enough."],
+    ["on"] = L["Blank name font on. Names above heads stay hidden."],
+    ["off-next"] = L["Blank name font off. Names above heads stay hidden until you log out and back in (or restart the game)."],
+    ["off"] = L["Blank name font off. Names above heads show as usual."],
+}
+local BLANK_NOW = {
+    ["on-next"] = L["Now: names still show. Log out and back in to hide them."],
+    ["on"] = L["Now: on. No names above heads."],
+    ["off-next"] = L["Now: names still hidden. Log out and back in to bring them back."],
+    ["off"] = L["Now: off. Names above heads show as usual."],
+}
+
 local function BuildHide()
     local P = NewPage("hide")
     local db = OA.db
@@ -476,7 +498,7 @@ local function BuildHide()
     P.Heading(L["Whose names"])
     Group({
         { "Me", L["Your name"], L["Every character you play."], "me", CVars },
-        { "Group", L["Party & raid"], L["Your crew while grouped."], "crew" },
+        { "Group", L["Party & raid"], L["Your crew while grouped."], "crew", CVars },
         { "Social", L["Everyone else"], L["Strangers, guild, lists."], "others", CVars },
         { "BNet", L["Battle.net friends"], L["Real names and BattleTags."], "friends" },
         { "Guild", L["Guild names"], L["Yours and everyone's."], "guilds" },
@@ -494,6 +516,17 @@ local function BuildHide()
     }, db.where)
 
     P.Note(L["Changes apply right away, also while live. Ending the broadcast brings every real name back, no reload needed. Chat lines written while live keep their aliases."])
+
+    -- The one switch that waits for a logout.
+    P.Heading(L["Names above heads"], L["The game draws these itself. Addons can't change that text, only its font, and the game reads the font only when you log in."])
+    P.Toggle({ icon = "Overhead", title = L["Blank name font"], help = L["No names above any head. Needs a logout."],
+        get = function() return db.blankNames == true end,
+        set = function(v)
+            db.blankNames = v
+            Utils.Print(BLANK_SAYS[OA.Hide.BlankFontState()])
+        end })
+    P.Note(function() return BLANK_NOW[OA.Hide.BlankFontState()] end, true)
+    P.Note(L["Hides every name the game draws above heads: players, pets, NPCs and yours, live or not. Nameplates still show, with aliases while live: to see NPC names, turn on friendly NPC nameplates (in the game's options or your nameplate addon). After you switch it on or off: type /logout and log back in, or restart the game. /reload is not enough, and until then nothing changes. This is a limit of the game engine, not of OnAir."])
     P.Finish()
 end
 
@@ -977,7 +1010,7 @@ local function BuildDeck()
             db.show = v
             Deck.Refresh()
         end })
-    P.Choice({ label = L["When you're not using it"], hint = L["Tuck works when the Deck sits on an edge: it slides away and leaves a small tab with an arrow."],
+    P.Choice({ label = L["When you're not using it"], hint = L["Tuck works when the Deck sits on an edge: it slides away and leaves a small handle."],
         options = {
             { value = "never", text = L["Stay"] },
             { value = "fade", text = L["Fade"] },
@@ -986,6 +1019,13 @@ local function BuildDeck()
         get = function() return db.hide end,
         set = function(v)
             db.hide = v
+            Deck.Refresh()
+        end })
+    P.Toggle({ icon = "Live", title = L["Status on the tuck handle"],
+        help = L["The small handle a tucked Deck leaves shows if you're live, in preview or off."],
+        get = function() return db.tabStatus ~= false end,
+        set = function(v)
+            db.tabStatus = v
             Deck.Refresh()
         end })
     P.Slider({ label = L["Faded to"], min = 0, max = 1, step = 0.05,

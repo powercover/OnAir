@@ -107,6 +107,7 @@ next
 pairs
 pcall
 print
+rawget
 select
 setmetatable
 string
@@ -118,3 +119,11 @@ tostring
 type
 unpack
 wipe
+GetSpecialization
+GetSpecializationInfo
+coroutine
+debugprofilestop
+BNGetFriendIndex
+NUM_CHAT_WINDOWS
+C_Console
+IsInInstance

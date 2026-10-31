@@ -76,6 +76,42 @@ local function LeaksIn(text, aliasWords, phrases)
     return found
 end
 
+-- Every name label in EllesmereUI's meter windows: what it holds and what OnAir thinks of it.
+local function MeterRows()
+    local lines = {}
+    for i = 1, 8 do
+        local stack = { _G["EllesmereUIDMFrame" .. i] }
+        while #stack > 0 and #lines < MAX_LINES do
+            local frame = table.remove(stack)
+            pcall(function()
+                for _, region in ipairs({ frame:GetRegions() }) do
+                    if region.GetObjectType and region:GetObjectType() == "FontString" then
+                        local ok, about = pcall(OA.Hide.Explain, region)
+                        about = ok and about or ("explain failed: " .. tostring(about))
+                        local text = region:GetText()
+                        if about:find("meter=", 1, true) or not ok or IsSecret(text)
+                            or (type(text) == "string" and Names.IsRealWord(text)) then
+                            local shown
+                            if IsSecret(text) then
+                                shown = "secret"
+                            elseif type(text) == "string" then
+                                shown = Names.IsRealWord(text) and ("real " .. Mask(text)) or Mask(text)
+                            else
+                                shown = "empty"
+                            end
+                            lines[#lines + 1] = string.format("  %s  [%s]", shown, about)
+                        end
+                    end
+                end
+                for _, child in ipairs({ frame:GetChildren() }) do
+                    stack[#stack + 1] = child
+                end
+            end)
+        end
+    end
+    return lines
+end
+
 local function ScanLeaks(report, secrets)
     local aliasWords, phrases = Names.AliasWords(), Names.Phrases()
     -- The UI, and the world frame too: nameplates hang off it, not the UI.
@@ -247,6 +283,106 @@ function Check.Later(seconds)
     C_Timer.After(seconds, function() Check.Run() end)
 end
 
+-- What shows your target's name above its head: a nameplate OnAir can reach (each text in it), a
+-- locked one, or none (the game draws the name itself, which addons can't change).
+local function TargetName(report)
+    report[#report + 1] = ""
+    report[#report + 1] = L["Your target's name above its head:"]
+    if not UnitExists("target") then
+        report[#report + 1] = L["  no target"]
+        return
+    end
+    local ok, plate = pcall(C_NamePlate.GetNamePlateForUnit, "target")
+    if not ok or not plate then
+        report[#report + 1] = L["  no nameplate: the game draws it itself"]
+        return
+    end
+    local okForbidden, forbidden = pcall(plate.IsForbidden, plate)
+    if not okForbidden or IsSecret(forbidden) or forbidden then
+        report[#report + 1] = L["  a locked nameplate: addons can't change it"]
+        return
+    end
+    local n = 0
+    local function Texts(frame, depth)
+        for _, region in ipairs({ frame:GetRegions() }) do
+            if n < 12 and region.GetObjectType and region:GetObjectType() == "FontString" then
+                local text = region:GetText()
+                if text ~= nil and (IsSecret(text) or text ~= "") then
+                    n = n + 1
+                    local alpha = region.GetEffectiveAlpha and region:GetEffectiveAlpha() or region:GetAlpha()
+                    report[#report + 1] = string.format("  %s  %s  alpha %s  [%s]", Where(region),
+                        IsSecret(text) and "secret" or Mask(text),
+                        IsSecret(alpha) and "secret" or string.format("%.2f", alpha), OA.Hide.Explain(region))
+                end
+            end
+        end
+        if depth > 0 then
+            for _, child in ipairs({ frame:GetChildren() }) do
+                pcall(Texts, child, depth - 1)
+            end
+        end
+    end
+    pcall(Texts, plate, 3)
+    if n == 0 then
+        report[#report + 1] = L["  a nameplate with no text"]
+    end
+end
+
+-- The game's own name switches (names above heads) as they are now: the ones OnAir knows, and
+-- every other "UnitName..." one this game version has.
+local NAME_SWITCHES = { "UnitNameOwn", "UnitNameFriendlyPlayerName", "UnitNameEnemyPlayerName", "UnitNamePlayerGuild",
+    "UnitNameFriendlyPetName", "UnitNameFriendlyMinionName", "UnitNameFriendlyGuardianName", "UnitNameNPC",
+    "nameplateShowFriendlyPlayers", "nameplateShowFriends", "nameplateShowOnlyNameForFriendlyPlayerUnits", "nameplateShowAll" }
+
+local function AllCommands()
+    return C_Console.GetAllCommands()
+end
+
+local function NameSwitches(report)
+    local list, seen = {}, {}
+    for _, name in ipairs(NAME_SWITCHES) do
+        list[#list + 1] = name
+        seen[name] = true
+    end
+    local ok, commands = pcall(AllCommands)
+    if ok and type(commands) == "table" then
+        for _, info in ipairs(commands) do
+            local name = type(info) == "table" and info.command
+            if type(name) == "string" and not IsSecret(name) and name:find("^UnitName") and not seen[name] then
+                seen[name] = true
+                list[#list + 1] = name
+            end
+        end
+    end
+    local parts = {}
+    for _, name in ipairs(list) do
+        local okValue, value = pcall(C_CVar.GetCVar, name)
+        if okValue and value ~= nil and not IsSecret(value) then
+            parts[#parts + 1] = name .. "=" .. tostring(value)
+        end
+    end
+    report[#report + 1] = ""
+    report[#report + 1] = L["Name switches (the game's):"]
+    for i = 1, #parts, 3 do
+        report[#report + 1] = "  " .. table.concat(parts, "  ", i, math.min(i + 2, #parts))
+    end
+end
+
+-- The blank name font: where it stands, and each name font as it is now, by file (another addon
+-- can set its own at login).
+local function NameFonts(report)
+    report[#report + 1] = ""
+    report[#report + 1] = string.format(L["Blank name font: %s"], OA.Hide.BlankFontState())
+    local parts = {}
+    for _, global in ipairs(OA.Hide.NAME_FONTS) do
+        local path = _G[global]
+        local file = type(path) == "string" and (path:match("[^\\/]+$") or path) or tostring(path)
+        -- "UNIT_NAME_FONT", then each alphabet's by its own word ("CYRILLIC").
+        parts[#parts + 1] = (#parts == 0 and global or global:sub(16)) .. "=" .. file
+    end
+    report[#report + 1] = "  " .. table.concat(parts, "  ")
+end
+
 function Check.Run()
     -- Players first, before learning anything: who OnAir didn't know until now is the point.
     local players = {}
@@ -293,11 +429,31 @@ function Check.Run()
         for _, line in ipairs(secrets) do
             report[#report + 1] = line
         end
+        TargetName(report)
+        report[#report + 1] = ""
+        report[#report + 1] = L["Damage meter names (EllesmereUI):"]
+        local rows = MeterRows()
+        if #rows == 0 then
+            report[#report + 1] = L["  none"]
+        end
+        for _, line in ipairs(rows) do
+            report[#report + 1] = line
+        end
     else
         report[#report + 1] = L["Go live or start a preview to check the screen for real names."]
     end
     for _, line in ipairs(players) do
         report[#report + 1] = line
+    end
+    NameSwitches(report)
+    NameFonts(report)
+    report[#report + 1] = ""
+    report[#report + 1] = L["OnAir errors:"]
+    if #Utils.errors == 0 then
+        report[#report + 1] = L["  none"]
+    end
+    for _, line in ipairs(Utils.errors) do
+        report[#report + 1] = "  " .. line
     end
     report[#report + 1] = ""
     report[#report + 1] = L["Names are partly masked. Send this to the developer if anything shows up."]

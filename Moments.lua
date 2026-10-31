@@ -178,6 +178,8 @@ local function Slate()
     slate.card:SetScale(UIParent:GetEffectiveScale() / slate:GetEffectiveScale())
     slate:SetAlpha(0)
     slate:Show()
+    -- On again while the last one still plays: from the start.
+    Kit.StopTween(slate)
     Kit.Tween(slate, 0, SLATE_TIME, SLATE_TIME, function(t)
         local out = 1 - Ease((t - (SLATE_TIME - 0.45)) / 0.45)
         slate:SetAlpha(math.min(Ease(t / 0.15), out))
@@ -255,6 +257,11 @@ function Moments.Restart()
 end
 
 function Moments.Stop()
+    -- Off air: the "on air" slate goes too.
+    if slate then
+        Kit.StopTween(slate)
+        slate:Hide()
+    end
     local session = Moments.Current()
     if session and not session.ended then
         session.ended = time()

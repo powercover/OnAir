@@ -7,7 +7,8 @@ local _, OA = ...
 --    friends, guild, communities, group finder, mail, scoreboard, popups.
 -- 2. Names the game keeps secret (combat, instances) can't be read, so they can't be replaced:
 --    those FontStrings are hidden instead, while they hold a secret player name.
--- 3. Overhead names: the game's own CVars, saved before going live and restored after.
+-- 3. Overhead names: the game's own CVars, saved before going live and restored after; and, as
+--    an option, a blank name font the game takes at login.
 -- 4. Tooltips, nameplates and damage meters get their own handling below.
 OA.Hide = {}
 
@@ -16,6 +17,7 @@ local Names = OA.Names
 local Utils = OA.Utils
 local IsSecret = Utils.IsSecret
 local SafeBool = Names.SafeBool
+local WORD, IsIndexWord = Names.WORD, Names.IsIndexWord
 
 local function Where(key)
     return OA.live and OA.db.where[key] ~= false
@@ -54,7 +56,57 @@ local CVARS = {
 
 local pendingCVars
 
+-- Every "UnitName..." switch the game has about pets, guardians, totems, minions or companions goes
+-- with the known ones (Midnight adds and renames some): looked up once, in the game's own list.
+local PET_PARTS = { "Pet", "Guardian", "Totem", "Minion", "Companion" }
+local petSwitchesFound = false
+
+local function FindPetSwitches()
+    if petSwitchesFound then
+        return
+    end
+    petSwitchesFound = true
+    local console = C_Console
+    if not (console and console.GetAllCommands) then
+        return
+    end
+    local ok, commands = pcall(console.GetAllCommands)
+    if not ok or type(commands) ~= "table" then
+        return
+    end
+    local known = {}
+    for _, cvar in ipairs(CVARS.pets) do
+        known[cvar] = true
+    end
+    for _, info in ipairs(commands) do
+        local name = type(info) == "table" and info.command
+        if type(name) == "string" and not IsSecret(name) and name:find("^UnitName") and not known[name] then
+            for _, part in ipairs(PET_PARTS) do
+                if name:find(part, 1, true) then
+                    known[name] = true
+                    CVARS.pets[#CVARS.pets + 1] = name
+                    break
+                end
+            end
+        end
+    end
+end
+
+-- Names above players' heads. The game draws your target's name itself, whatever the switches
+-- say, and addons can't change that text; but a player with a nameplate shows the plate instead,
+-- and OnAir masks plates. So while live friendly players get name-only plates. The player name
+-- switch stays off: it also brings back the other faction's names, which get no friendly plate.
+-- Inside instances the game locks those plates (they'd show real names): switched off there.
+local PLATE_NAMES = { nameplateShowFriendlyPlayers = "1", nameplateShowOnlyNameForFriendlyPlayerUnits = "1" }
+
+local function InInstance()
+    local ok, inside = pcall(IsInInstance)
+    return ok and inside == true
+end
+
+-- Each switch OnAir sets while live, with its value.
 local function CVarsWanted()
+    FindPetSwitches()
     local wanted = {}
     if OA.db.where.nameplates == false then
         return wanted
@@ -66,43 +118,82 @@ local function CVarsWanted()
         end
         if on then
             for _, cvar in ipairs(list) do
-                wanted[cvar] = true
+                wanted[cvar] = "0"
+            end
+        end
+    end
+    if OA.db.who.others ~= false or OA.db.who.crew ~= false then
+        if InInstance() then
+            wanted.nameplateShowFriendlyPlayers = "0"
+        else
+            for cvar, value in pairs(PLATE_NAMES) do
+                wanted[cvar] = value
             end
         end
     end
     return wanted
 end
 
--- Overhead names off for what's hidden. The values from before are kept in the saved variables,
--- so a crash or a disconnect while live still restores them on the next login.
+-- The game's name switches set for live, only while live. Your own values are kept first (once,
+-- in the saved variables, so a crash or a disconnect while live still gets them back on the next
+-- login), and what OnAir set is noted, so putting them back can tell a later change of yours.
 function Hide.ApplyCVars()
+    if not OA.live then
+        return
+    end
     if InCombatLockdown() then
         pendingCVars = "apply"
         return
     end
     local db = OA.db
     db.savedCVars = db.savedCVars or {}
-    for cvar in pairs(CVarsWanted()) do
+    db.cvarsSet = db.cvarsSet or {}
+    for cvar, target in pairs(CVarsWanted()) do
         local value = C_CVar.GetCVar(cvar)
         if value ~= nil then
             if db.savedCVars[cvar] == nil then
                 db.savedCVars[cvar] = value
             end
-            pcall(C_CVar.SetCVar, cvar, "0")
+            if value ~= target then
+                pcall(C_CVar.SetCVar, cvar, target)
+            end
+            db.cvarsSet[cvar] = target
         end
     end
 end
 
+-- Into or out of an instance while live: plates on or off (a moment later, after other addons
+-- set their own nameplate switches for the new zone).
+local zoneWatch = CreateFrame("Frame")
+zoneWatch:RegisterEvent("PLAYER_ENTERING_WORLD")
+zoneWatch:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+zoneWatch:SetScript("OnEvent", function()
+    if OA.live then
+        C_Timer.After(0.5, function()
+            if OA.live then
+                Utils.Guard("name switches", Hide.ApplyCVars)()
+            end
+        end)
+    end
+end)
+
+-- Your own values back. A switch that no longer holds what OnAir set was changed since (by you
+-- or another addon, or the game never kept OnAir's change after a crash): that's the newer
+-- choice, and it stays.
 function Hide.RestoreCVars()
     if InCombatLockdown() then
         pendingCVars = "restore"
         return
     end
     local db = OA.db
+    local set = db.cvarsSet or {}
     for cvar, value in pairs(db.savedCVars or {}) do
-        pcall(C_CVar.SetCVar, cvar, value)
+        if set[cvar] == nil or C_CVar.GetCVar(cvar) == set[cvar] then
+            pcall(C_CVar.SetCVar, cvar, value)
+        end
     end
     db.savedCVars = nil
+    db.cvarsSet = nil
 end
 
 function Hide.OnCombatEnd()
@@ -116,6 +207,75 @@ function Hide.OnCombatEnd()
     elseif todo == "restore" then
         Hide.RestoreCVars()
     end
+end
+
+---------------------------------------------------------------------------------------------- blank name font
+
+-- Names above heads are drawn by the game, and no addon can change that text: only the font it's
+-- drawn with, and only while you log in. The game reads its name fonts once then and keeps them
+-- until you log out (a /reload doesn't read them again). With the blank name font on (an option,
+-- off by default), OnAir hands the game a font without ink: no name shows above any head
+-- (players, pets, NPCs, yours), live or not. Switching it either way shows after a logout. Each
+-- alphabet has its own name font (a Cyrillic or Korean name is drawn with its own): all go.
+local BLANK_FONT = Utils.MEDIA .. "OnAirBlank.ttf"
+Hide.NAME_FONTS = { "UNIT_NAME_FONT", "UNIT_NAME_FONT_ROMAN", "UNIT_NAME_FONT_CYRILLIC",
+    "UNIT_NAME_FONT_KOREAN", "UNIT_NAME_FONT_CHINESE" }
+
+local blankThisLogin = false  -- the game gets the blank font at this login
+local blankMissing = false    -- the option is on, but the client can't find the font file
+local entered = false         -- the first PLAYER_ENTERING_WORLD came: the login is over
+
+-- The client finds the file (SetFont raises when it can't). A name font the game can't load would
+-- leave it with none, so then it keeps its own.
+local function BlankFontLoads()
+    local probe = UIParent:CreateFontString()
+    return (pcall(probe.SetFont, probe, BLANK_FONT, 12, ""))
+end
+
+-- While you log in: OnAir's load, PLAYER_LOGIN and the first PLAYER_ENTERING_WORLD. The game reads
+-- the fonts in there somewhere, and an addon loading later can set a name font of its own at the
+-- same times (EllesmereUI's name font does), so the blank one goes in again each time.
+function Hide.NameFontAtLogin()
+    if entered or blankMissing then
+        return
+    end
+    if not blankThisLogin then
+        if not OA.db.blankNames then
+            return
+        end
+        if not BlankFontLoads() then
+            blankMissing = true
+            Utils.Print(OA.L["The blank name font is missing, so names above heads still show. Reinstall OnAir."])
+            return
+        end
+        blankThisLogin = true
+    end
+    for _, global in ipairs(Hide.NAME_FONTS) do
+        _G[global] = BLANK_FONT
+    end
+end
+
+-- The first PLAYER_ENTERING_WORLD. A real login remembers what the game got, in the saved
+-- variables: after a /reload the game still has the fonts it read at the login.
+function Hide.NameFontEntered(isInitialLogin)
+    if entered then
+        return
+    end
+    Hide.NameFontAtLogin()
+    entered = true
+    if isInitialLogin then
+        OA.db.blankNamesNow = blankThisLogin or nil
+    end
+end
+
+-- "on" or "off", or "on-next" / "off-next": switched since the login, and the game shows that
+-- after the next logout.
+function Hide.BlankFontState()
+    local wanted, now = OA.db.blankNames == true, OA.db.blankNamesNow == true
+    if wanted == now then
+        return wanted and "on" or "off"
+    end
+    return wanted and "on-next" or "off-next"
 end
 
 ---------------------------------------------------------------------------------------------- muting
@@ -210,14 +370,22 @@ end
 --  Blizzard: an ancestor named DamageMeter*, the FontString kept under a "name"-like key.
 local meterKind = setmetatable({}, { __mode = "k" })
 
-local function NamedAncestor(frame, prefix, depth)
-    for _ = 1, depth do
+-- Which meter a frame sits in (one walk up its parents): EllesmereUI's within 8 levels, Details!'s
+-- bars within 4, Blizzard's within 10.
+local function MeterOf(frame)
+    for depth = 1, 10 do
         if not frame then
             return nil
         end
         local name = frame.GetName and frame:GetName()
-        if name and name:find(prefix, 1, true) == 1 then
-            return frame
+        if name then
+            if depth <= 8 and name:find("EllesmereUIDMFrame", 1, true) == 1 then
+                return "eui"
+            elseif depth <= 4 and name:find("DetailsBarra_", 1, true) == 1 then
+                return "details"
+            elseif name:find("DamageMeter", 1, true) == 1 then
+                return "blizz"
+            end
         end
         frame = frame:GetParent()
     end
@@ -229,7 +397,8 @@ local function Classify(fs)
     if not holder then
         return false
     end
-    if NamedAncestor(holder, "EllesmereUIDMFrame", 8) then
+    local meter = MeterOf(holder)
+    if meter == "eui" then
         local first, second = holder:GetRegions()
         if second ~= fs or not (first and first.GetObjectType and first:GetObjectType() == "FontString") then
             return false
@@ -243,7 +412,7 @@ local function Classify(fs)
         return false
     end
     -- Details!: each bar is a frame named DetailsBarra_<window>_<row>, its left text "lineText1".
-    if NamedAncestor(holder, "DetailsBarra_", 4) then
+    if meter == "details" then
         local parent = holder
         for _ = 1, 3 do
             if not parent then
@@ -256,7 +425,7 @@ local function Classify(fs)
         end
         return false
     end
-    if NamedAncestor(holder, "DamageMeter", 10) then
+    if meter == "blizz" then
         local parent = holder
         for _ = 1, 3 do
             if not parent then
@@ -289,35 +458,49 @@ end
 ---------------------------------------------------------------------------------------------- text hook
 
 local busy = false
-local RING_SIZE = 600
-local ring, ringPos = {}, 0
-
-local function Remember(obj)
-    ringPos = ringPos % RING_SIZE + 1
-    ring[ringPos] = obj
-end
 
 -- Words left as they were (no name OnAir knows yet) -> the labels holding them. When one of them
--- turns out to be a name, only those labels are looked at again: no sweeping the whole UI.
+-- turns out to be a name, only those labels are looked at again: no sweeping the whole UI. Kept
+-- to a size: past it the list starts over (labels set before that just aren't looked at again).
 local waiting = {}
+local waitingCount = 0
+local WAITING_LIMIT = 6000
+local WEAK = { __mode = "k" }
+local waitedOn = setmetatable({}, WEAK)  -- label -> the text it was indexed with
+
+local function Index(obj, word)
+    local holders = waiting[word]
+    if not holders then
+        holders = setmetatable({}, WEAK)
+        waiting[word] = holders
+        waitingCount = waitingCount + 1
+    end
+    holders[obj] = true
+end
 
 local function Wait(obj, text)
-    for word in text:gmatch("[%a\128-\255][%w\128-\255'%-]*") do
-        local first = word:byte(1)
-        -- Names start with a capital (or a letter outside plain ASCII).
-        if #word >= 2 and (first >= 128 or (first >= 65 and first <= 90)) then
-            local holders = waiting[word]
-            if not holders then
-                holders = setmetatable({}, { __mode = "k" })
-                waiting[word] = holders
+    -- The same text again (most labels are set over and over): indexed already.
+    if waitedOn[obj] == text then
+        return
+    end
+    -- Full: start over before this label (so it's indexed whole).
+    if waitingCount >= WAITING_LIMIT then
+        wipe(waiting)
+        wipe(waitedOn)
+        waitingCount = 0
+    end
+    waitedOn[obj] = text
+    for word in text:gmatch(WORD) do
+        if IsIndexWord(word) then
+            Index(obj, word)
+            -- "Bob's", "Name-Realm": the name alone may be what gets learned.
+            local letters = word:match("^[%a\128-\255]+")
+            if letters ~= word and #letters >= 2 then
+                Index(obj, letters)
             end
-            holders[obj] = true
-            -- "Name-Realm": the name alone may be what gets learned.
-            local short = word:match("^(.-)%-")
-            if short and #short >= 2 then
-                local list = waiting[short] or setmetatable({}, { __mode = "k" })
-                waiting[short] = list
-                list[obj] = true
+            local short = word:find("-", 1, true) and word:match("^(.-)%-")
+            if short and short ~= letters and #short >= 2 then
+                Index(obj, short)
             end
         end
     end
@@ -366,8 +549,10 @@ end
 
 local function PutBackOne(obj, text)
     if Usable(obj) then
+        -- A label that once held hidden text may keep reporting it hidden after plain text was
+        -- set; its owner setting new text would have dropped it from this list anyway.
         local now = obj:GetText()
-        if not IsSecret(now) and now == text then
+        if IsSecret(now) or now == text then
             SetQuiet(obj, before[obj])
         end
     end
@@ -382,6 +567,258 @@ local function PutBack()
     wipe(before)
 end
 
+-- Who a meter row stands for when its name is secret (combat). The row's own data says if it's you
+-- (isLocalPlayer is never secret), and class + spec icon are never secret either: out of combat,
+-- when names are readable, each player's class + spec is remembered with their alias, so in
+-- combat a row with a unique class + spec gets the same alias. Two players alike: no guess.
+local bySpec = {}
+
+-- The data behind a meter row: EllesmereUI keeps it in bar._src, Blizzard on the entry itself.
+local function RowSource(fs)
+    local holder = fs:GetParent()
+    for _ = 1, 5 do
+        if not holder then
+            return nil
+        end
+        local src = rawget(holder, "_src")
+        if type(src) == "table" then
+            return src
+        end
+        if rawget(holder, "classFilename") ~= nil or rawget(holder, "isLocalPlayer") ~= nil then
+            return holder
+        end
+        holder = holder:GetParent()
+    end
+end
+
+local function RowSourceOf(fs)
+    if meterKind[fs] == "eui" then
+        return nil
+    end
+    return RowSource(fs)
+end
+
+local function SpecKey(src)
+    local class, spec = src.classFilename, src.specIconID
+    if class == nil or spec == nil or IsSecret(class) or IsSecret(spec) or class == "" then
+        return nil
+    end
+    return class .. ":" .. tostring(spec)
+end
+
+-- EllesmereUI keeps a row's data in a plain table the label can't reach. Its row icon (spec or
+-- class) and bar color are never secret, so they tell the rows apart: label -> text frame ->
+-- bar, whose textures are the icon (and maybe a track).
+-- (A meter redraws its rows many times a second in a fight: what's found per row is kept, and the
+-- key is worked out again only when the row's icon changes.)
+local rowTextures = setmetatable({}, WEAK)
+local rowFill = setmetatable({}, WEAK)
+
+local function RowTextures(fs)
+    local list = rowTextures[fs]
+    if list then
+        return list, rowFill[fs]
+    end
+    local tf = fs:GetParent()
+    local fill = tf and tf:GetParent()
+    if not fill or fill:GetObjectType() ~= "StatusBar" then
+        return nil
+    end
+    local skip = fill.GetStatusBarTexture and fill:GetStatusBarTexture()
+    list = {}
+    for _, region in ipairs({ fill:GetRegions() }) do
+        if region ~= skip and region:GetObjectType() == "Texture" then
+            list[#list + 1] = region
+        end
+    end
+    rowTextures[fs], rowFill[fs] = list, fill
+    return list, fill
+end
+
+local keySeen, keyOf = setmetatable({}, WEAK), setmetatable({}, WEAK)
+
+-- What the key is made of, read cheaply (no strings built): each texture with its first texture
+-- coordinates (class icons can share one sheet), and the bar color. Into one reused list.
+local scratch = {}
+
+local function ReadSignature(list, fill)
+    local n = 0
+    for i = 1, #list do
+        local region = list[i]
+        local ulx, uly = region:GetTexCoord()
+        scratch[n + 1] = region:GetAtlas() or region:GetTexture()
+        scratch[n + 2] = ulx
+        scratch[n + 3] = uly
+        n = n + 3
+    end
+    local r, g, b = fill:GetStatusBarColor()
+    scratch[n + 1], scratch[n + 2], scratch[n + 3] = r, g, b
+    return n + 3
+end
+
+local function BuildIconKey(list, fill)
+    local parts = {}
+    for _, region in ipairs(list) do
+        local tex = region:GetAtlas() or region:GetTexture()
+        if tex ~= nil then
+            parts[#parts + 1] = tostring(tex)
+            for _, v in ipairs({ region:GetTexCoord() }) do
+                parts[#parts + 1] = string.format("%.2f", v)
+            end
+        end
+    end
+    if #parts == 0 then
+        return nil
+    end
+    local r, g, b = fill:GetStatusBarColor()
+    if r then
+        parts[#parts + 1] = string.format("%.2f,%.2f,%.2f", r, g, b)
+    end
+    local key = table.concat(parts, ":")
+    return not IsSecret(key) and key or nil
+end
+
+local function IconKey(fs)
+    local list, fill = RowTextures(fs)
+    if not list or not list[1] then
+        return nil
+    end
+    local n = ReadSignature(list, fill)
+    local seen = keySeen[fs]
+    local same = seen ~= nil and seen.n == n
+    for i = 1, n do
+        local v = scratch[i]
+        if IsSecret(v) then
+            return nil
+        end
+        if same and seen[i] ~= v then
+            same = false
+        end
+    end
+    if not same then
+        seen = seen or {}
+        for i = 1, n do
+            seen[i] = scratch[i]
+        end
+        seen.n = n
+        keySeen[fs] = seen
+        keyOf[fs] = BuildIconKey(list, fill) or false
+    end
+    return keyOf[fs] or nil
+end
+
+-- Your own spec's icon (looked up again every few seconds, not on every redraw).
+local myIcon, myIconAt = nil, -10
+
+local function MySpecIcon()
+    local now = GetTime()
+    if now - myIconAt > 5 then
+        myIconAt = now
+        local spec = GetSpecialization and GetSpecialization()
+        myIcon = spec and select(4, GetSpecializationInfo(spec)) or nil
+    end
+    return myIcon
+end
+
+-- Your own spec's icon on the row: it's you (when OnAir hasn't learned otherwise).
+local function MyIcon(fs)
+    local list = RowTextures(fs)
+    local icon = list and MySpecIcon()
+    if not icon then
+        return false
+    end
+    for _, region in ipairs(list) do
+        local tex = region:GetTexture()
+        if not IsSecret(tex) and tex == icon then
+            return true
+        end
+    end
+    return false
+end
+
+local function RowKey(fs)
+    local src = RowSourceOf(fs)
+    if src then
+        return SpecKey(src)
+    end
+    local ok, key = pcall(IconKey, fs)
+    return ok and key or nil
+end
+
+local function RememberRow(fs, alias)
+    local key = RowKey(fs)
+    if key then
+        if bySpec[key] == nil or bySpec[key] == alias then
+            bySpec[key] = alias
+        else
+            bySpec[key] = false
+        end
+    end
+end
+
+-- A meter fills a row's name before it attaches the row's data (EllesmereUI sets bar._src after
+-- the label), so the row is looked at again a frame later, when the data is there. One list and
+-- one frame for all rows: no timer per redraw. remember[fs] = the alias it showed (plain name);
+-- recheck[fs] = what OnAir put there (secret name).
+local remember, recheck, recheckText = setmetatable({}, WEAK), setmetatable({}, WEAK), setmetatable({}, WEAK)
+local laterFrame = CreateFrame("Frame")
+local RowAlias
+
+local function RunLater()
+    laterFrame:SetScript("OnUpdate", nil)
+    if not OA.live then
+        wipe(remember)
+        wipe(recheck)
+        wipe(recheckText)
+        return
+    end
+    for fs, alias in pairs(remember) do
+        RememberRow(fs, alias)
+    end
+    for fs, shown in pairs(recheck) do
+        local alias = RowAlias(fs) or Names.Fill(OA.db.meterUnknown, 0)
+        -- Only if the row still shows what OnAir put there (no newer name since).
+        if wrote[fs] == shown and alias ~= shown then
+            Rewrite(fs, recheckText[fs], alias)
+        end
+    end
+    wipe(remember)
+    wipe(recheck)
+    wipe(recheckText)
+end
+local GuardedLater = Utils.Guard("meter row", RunLater)
+
+local function Later()
+    laterFrame:SetScript("OnUpdate", GuardedLater)
+end
+
+RowAlias = function(fs)
+    local src = RowSourceOf(fs)
+    if src then
+        local own = src.isLocalPlayer
+        if own ~= nil and not IsSecret(own) and own == true then
+            return Names.MeAlias()
+        end
+    end
+    local key = RowKey(fs)
+    local known = key and bySpec[key]
+    if known ~= nil then
+        return known or nil
+    end
+    local ok, mine = pcall(MyIcon, fs)
+    return ok and mine and Names.MeAlias() or nil
+end
+
+-- A row whose name is secret: who it is from the row's data right away (a meter redraws its rows
+-- all through a fight, and the data from the last redraw is almost always the same row), then
+-- once more a frame later, when this redraw's data is attached.
+local function SecretRow(fs, text)
+    local shown = RowAlias(fs) or Names.Fill(OA.db.meterUnknown, 0)
+    Rewrite(fs, text, shown)
+    recheck[fs], recheckText[fs] = shown, text
+    Later()
+end
+
 -- A meter's name label. Returns true when it was handled here.
 local function MeterLabel(fs, kind, text)
     if kind == "eui" then
@@ -390,29 +827,33 @@ local function MeterLabel(fs, kind, text)
         end
         local plain = type(text) == "string" and not IsSecret(text)
         if plain then
-            Mute(fs, "secret", false)
             local out = Names.Scrub(text)
             if out ~= text then
                 Rewrite(fs, text, out)
+                remember[fs] = out
+                Later()
             end
+            -- A name OnAir learns only later (the group's roster after the row): fixed then.
+            Wait(fs, out)
             return true
         end
-        Rewrite(fs, text, Names.Fill(OA.db.meterUnknown, 0))
-        Mute(fs, "secret", IsSecret(fs:GetText()))
+        SecretRow(fs, text)
         return true
     end
     if kind == "blizz" or kind == "details" then
         if IsSecret(text) then
-            Rewrite(fs, text, Names.Fill(OA.db.meterUnknown, 0))
-            -- If the label wouldn't take other text, it's hidden instead.
-            Mute(fs, "secret", IsSecret(fs:GetText()))
+            SecretRow(fs, text)
             return true
         end
         if type(text) == "string" and text ~= "" and Where("interface") then
             local out = Names.Scrub(text)
             if out ~= text then
                 Rewrite(fs, text, out)
+                remember[fs] = out
+                Later()
             end
+            -- A name OnAir learns only later (the group's roster after the row): fixed then.
+            Wait(fs, out)
             return true
         end
     end
@@ -420,6 +861,48 @@ local function MeterLabel(fs, kind, text)
 end
 
 local castTargets = setmetatable({}, { __mode = "k" })
+
+local GROUP = { "player" }
+for i = 1, 4 do
+    GROUP[#GROUP + 1] = "party" .. i
+end
+for i = 1, 40 do
+    GROUP[#GROUP + 1] = "raid" .. i
+end
+
+-- The alias of whoever the caster (the plate's unit) targets: you or a group member.
+local function CasterTargetAlias(fs)
+    local holder, plate = fs:GetParent(), nil
+    for _ = 1, 3 do
+        if not holder then
+            break
+        end
+        if holder.castTarget == fs then
+            plate = holder
+            break
+        end
+        holder = holder:GetParent()
+    end
+    local unit = plate and (plate.unit or plate.namePlateUnitToken)
+    if type(unit) ~= "string" or IsSecret(unit) then
+        return nil
+    end
+    local target = unit .. "target"
+    if not SafeBool(UnitExists, target) then
+        return nil
+    end
+    if SafeBool(UnitIsUnit, target, "player") then
+        return Names.MeAlias()
+    end
+    for i = 2, #GROUP do
+        local member = GROUP[i]
+        if SafeBool(UnitExists, member) and SafeBool(UnitIsUnit, target, member) then
+            local person = Names.AddUnit(member)
+            return person and person.alias or nil
+        end
+    end
+    return nil
+end
 
 -- "always": a nameplate's cast target label (EllesmereUI, Plater). "secret": hidden only while it
 -- holds a secret value - other cast target labels (EllesmereUI cast bars and Mythic+ target bars)
@@ -486,7 +969,21 @@ local function OnText(obj)
             castTargets[obj] = cast
         end
         if cast == "always" then
-            Mute(obj, "tot", true)
+            -- The game always gives the cast target's name as a secret: it can't be read. Who the
+            -- caster targets can be asked, though: you or someone in your group shows as their
+            -- alias (usually the spell's target too). Anyone else: hidden.
+            local plain = type(text) == "string" and not IsSecret(text)
+            if plain and text == "" then
+                Mute(obj, "tot", false)
+                return
+            end
+            local alias = plain and Names.Scrub(text) ~= text and Names.Scrub(text) or CasterTargetAlias(obj)
+            if alias then
+                Mute(obj, "tot", false)
+                Rewrite(obj, text, alias)
+            else
+                Mute(obj, "tot", true)
+            end
             return
         elseif cast == "secret" then
             Mute(obj, "secret", IsSecret(obj:GetText()))
@@ -509,6 +1006,10 @@ local function OnText(obj)
     if not Where("interface") or type(text) ~= "string" or IsSecret(text) or text == "" then
         return
     end
+    -- Numbers, timers, bars: no name in there (most of what the UI sets, many times a second).
+    if not text:find("[%a\128-\255]") then
+        return
+    end
     -- A note on a friend or guild member: emptied (it's put back when the broadcast ends).
     if Names.IsNote(text) then
         Rewrite(obj, text, "")
@@ -523,7 +1024,6 @@ local function OnText(obj)
         guard[obj] = true
     end
     Wait(obj, out)
-    Remember(obj)
 end
 local GuardedText = Utils.Guard("text", OnText)
 Hide.OnText = GuardedText
@@ -549,12 +1049,6 @@ Hide.Rescrub = Utils.Debouncer(function()
     if not OA.live then
         return
     end
-    for i = 1, RING_SIZE do
-        local obj = ring[i]
-        if obj and Usable(obj) and Visible(obj) then
-            GuardedText(obj)
-        end
-    end
     if Hide.RefreshTooltip then
         Hide.RefreshTooltip()
     end
@@ -564,6 +1058,7 @@ Hide.Rescrub = Utils.Debouncer(function()
         local holders = waiting[word]
         if holders then
             waiting[word] = nil
+            waitingCount = waitingCount - 1
             for obj in pairs(holders) do
                 if Usable(obj) then
                     GuardedText(obj)
@@ -571,9 +1066,27 @@ Hide.Rescrub = Utils.Debouncer(function()
             end
         end
     end
+    -- A note learned now (rosters are read a slice at a time): a label could hold it whole, and a
+    -- note isn't a word to look up, so the screen is looked over again (a slice per frame).
+    if Names.TakeNotesNew() then
+        Hide.SweepUI()
+    end
 end, 0.05)
 
 ---------------------------------------------------------------------------------------------- tooltips
+
+-- A unit whose name gives a player away: a player, or something a player controls (pets,
+-- guardians, totems carry their owner's name or one the owner chose).
+local function Owned(unit)
+    if type(unit) ~= "string" or not SafeBool(UnitExists, unit) then
+        return false
+    end
+    return SafeBool(UnitPlayerControlled, unit) == true and SafeBool(UnitIsPlayer, unit) ~= true
+end
+
+local function IsPlayer(unit)
+    return type(unit) == "string" and SafeBool(UnitExists, unit) and SafeBool(UnitIsPlayer, unit) == true
+end
 
 local function ScrubTooltip(tooltip)
     if not Where("tooltips") or not tooltip or not Usable(tooltip) then
@@ -610,6 +1123,17 @@ local function OnUnitTooltip(tooltip)
                 SetQuiet(first, mode == "generic" and Hide.NpcLabel(unit) or "")
             end
         end
+        -- A pet or minion: its name reads "<owner>'s Pet", and the owner on the line under it
+        -- ("Jennie's Minion") is learned, so that line reads their alias. A stranger's pet name
+        -- itself isn't learned as a word: a hunter's "Shadow" would eat every "Shadow Bolt".
+        if Where("tooltips") and OA.db.who.pets ~= false and Owned(unit) then
+            local name = tooltip.GetName and tooltip:GetName()
+            local first = name and _G[name .. "TextLeft1"]
+            local second = name and _G[name .. "TextLeft2"]
+            if first then
+                SetQuiet(first, Names.PetLabel(Names.OwnerIn(second and second:GetText())))
+            end
+        end
     end
     ScrubTooltip(tooltip)
 end
@@ -641,18 +1165,6 @@ end
 
 ---------------------------------------------------------------------------------------------- units
 
--- A unit whose name gives a player away: a player, or something a player controls (pets,
--- guardians, totems carry their owner's name or one the owner chose).
-local function Owned(unit)
-    if type(unit) ~= "string" or not SafeBool(UnitExists, unit) then
-        return false
-    end
-    return SafeBool(UnitPlayerControlled, unit) == true and SafeBool(UnitIsPlayer, unit) ~= true
-end
-
-local function IsPlayer(unit)
-    return type(unit) == "string" and SafeBool(UnitExists, unit) and SafeBool(UnitIsPlayer, unit) == true
-end
 
 -- One name FontString showing `unit`: guarded for a player, hidden for a pet, and for an NPC
 -- whatever the NPC setting says (its real name, a generic label, or nothing).
@@ -681,52 +1193,65 @@ local function NameFor(fs, unit, alwaysHide)
     end
 end
 
-local function FrameNames(frame)
+-- A unit frame's name labels (Blizzard's and EllesmereUI's keep them under these names).
+local function UnitFrameNames(frame, unit, alwaysHide)
     if not frame then
-        return {}
+        return
     end
-    local list = { frame.name, frame.Name, frame.NameText }
+    NameFor(frame.name, unit, alwaysHide)
+    NameFor(frame.Name, unit, alwaysHide)
+    NameFor(frame.NameText, unit, alwaysHide)
     local global = frame.GetName and frame:GetName()
     if global then
-        list[#list + 1] = _G[global .. "Name"]
-        list[#list + 1] = _G[global .. "TextName"]
+        NameFor(_G[global .. "Name"], unit, alwaysHide)
+        NameFor(_G[global .. "TextName"], unit, alwaysHide)
     end
     local content = frame.TargetFrameContent
     if content and content.TargetFrameContentMain then
-        list[#list + 1] = content.TargetFrameContentMain.Name
-    end
-    return list
-end
-
-local function UnitFrameNames(frame, unit, alwaysHide)
-    for _, fs in ipairs(FrameNames(frame)) do
-        NameFor(fs, unit, alwaysHide)
+        NameFor(content.TargetFrameContentMain.Name, unit, alwaysHide)
     end
 end
 
 -- Target-of-target names are hidden outright (they move too fast to follow, and a boss's target
 -- is always someone in your group).
-function Hide.UnitFrames()
-    if not Where("interface") then
-        return
-    end
-    UnitFrameNames(_G.PlayerFrame, "player")
-    NameFor(_G.PlayerName, "player")
-    UnitFrameNames(_G.PetFrame, "pet")
-    NameFor(_G.PetName, "pet")
-    UnitFrameNames(_G.TargetFrame, "target")
-    UnitFrameNames(_G.FocusFrame, "focus")
+local function TargetTargetNames()
     UnitFrameNames(_G.TargetFrameToT, "targettarget", true)
-    UnitFrameNames(_G.FocusFrameToT, "focustarget", true)
-    -- EllesmereUI unit frames
-    UnitFrameNames(_G.EllesmereUIUnitFrames_Player, "player")
-    UnitFrameNames(_G.EllesmereUIUnitFrames_Pet, "pet")
-    UnitFrameNames(_G.EllesmereUIUnitFrames_Target, "target")
-    UnitFrameNames(_G.EllesmereUIUnitFrames_Focus, "focus")
     UnitFrameNames(_G.EllesmereUIUnitFrames_TargetTarget, "targettarget", true)
+end
+
+local function FocusTargetNames()
+    UnitFrameNames(_G.FocusFrameToT, "focustarget", true)
     UnitFrameNames(_G.EllesmereUIUnitFrames_FocusTarget, "focustarget", true)
-    local party = _G.PartyFrame
-    if party then
+end
+
+local UNIT_GROUPS = {
+    player = function()
+        UnitFrameNames(_G.PlayerFrame, "player")
+        NameFor(_G.PlayerName, "player")
+        UnitFrameNames(_G.EllesmereUIUnitFrames_Player, "player")
+    end,
+    pet = function()
+        UnitFrameNames(_G.PetFrame, "pet")
+        NameFor(_G.PetName, "pet")
+        UnitFrameNames(_G.EllesmereUIUnitFrames_Pet, "pet")
+    end,
+    target = function()
+        UnitFrameNames(_G.TargetFrame, "target")
+        UnitFrameNames(_G.EllesmereUIUnitFrames_Target, "target")
+        TargetTargetNames()
+    end,
+    focus = function()
+        UnitFrameNames(_G.FocusFrame, "focus")
+        UnitFrameNames(_G.EllesmereUIUnitFrames_Focus, "focus")
+        FocusTargetNames()
+    end,
+    targettarget = TargetTargetNames,
+    focustarget = FocusTargetNames,
+    group = function()
+        local party = _G.PartyFrame
+        if not party then
+            return
+        end
         if party.PartyMemberFramePool then
             for member in party.PartyMemberFramePool:EnumerateActive() do
                 UnitFrameNames(member, member.unit)
@@ -738,13 +1263,38 @@ function Hide.UnitFrames()
                 UnitFrameNames(member, member.unit or ("party" .. i))
             end
         end
+    end,
+}
+local UNIT_ORDER = { "player", "pet", "target", "focus", "group" }
+
+-- All unit frames, or one group of them ("target" also does its target-of-target).
+function Hide.UnitFrames(which)
+    if not Where("interface") then
+        return
+    end
+    if which then
+        local fn = UNIT_GROUPS[which]
+        if fn then
+            fn()
+        end
+        return
+    end
+    for _, key in ipairs(UNIT_ORDER) do
+        UNIT_GROUPS[key]()
     end
 end
 
 ---------------------------------------------------------------------------------------------- nameplates
 
-local GuardedPlates
+local function PlateNames(plate, unit)
+    NameFor(plate.name, plate.unit or unit)
+    -- Who a cast targets: always someone in your group or you.
+    if plate.castTarget then
+        GuardedText(plate.castTarget)
+    end
+end
 
+-- Every EllesmereUI plate (going live).
 local function EllesmerePlates()
     local ns = _G.EllesmereNameplates_NS
     if not ns then
@@ -754,21 +1304,41 @@ local function EllesmerePlates()
         if type(list) == "table" then
             for unit, plate in pairs(list) do
                 if type(plate) == "table" then
-                    NameFor(plate.name, plate.unit or unit)
-                    -- Who a cast targets: always someone in your group or you.
-                    Mute(plate.castTarget, "tot", true)
+                    PlateNames(plate, unit)
                 end
             end
         end
     end
 end
 
-GuardedPlates = Utils.Guard("plates", EllesmerePlates)
+-- Plates that just came (a city fills dozens in a moment): EllesmereUI keeps them by unit, so
+-- only those are looked at, once, on the next frame (it builds its plate on the same event).
+local platesDue = {}
+local platesQueued = false
+
+local function DuePlates()
+    platesQueued = false
+    local ns = _G.EllesmereNameplates_NS
+    if ns then
+        local hostile = type(ns.plates) == "table" and ns.plates or nil
+        local friendly = type(ns.friendlyPlates) == "table" and ns.friendlyPlates or nil
+        for unit in pairs(platesDue) do
+            local plate = (hostile and hostile[unit]) or (friendly and friendly[unit])
+            if type(plate) == "table" then
+                PlateNames(plate, unit)
+            end
+        end
+    end
+    wipe(platesDue)
+end
+local GuardedDuePlates = Utils.Guard("plates", DuePlates)
 
 function Hide.NamePlate(unit)
     if not Where("nameplates") then
         return
     end
+    -- Learned before its name is looked at: the plate shows the alias from its first frame.
+    OA.Collect.Unit(unit)
     local plate = C_NamePlate.GetNamePlateForUnit(unit)
     if plate and Usable(plate) then
         if plate.UnitFrame then
@@ -781,8 +1351,11 @@ function Hide.NamePlate(unit)
             NameFor(plate.ActorNameSpecial, unit)
         end
     end
-    -- EllesmereUI builds its plate on the same event: look a frame later.
-    C_Timer.After(0, GuardedPlates)
+    platesDue[unit] = true
+    if not platesQueued then
+        platesQueued = true
+        C_Timer.After(0, GuardedDuePlates)
+    end
 end
 
 function Hide.AllNamePlates()
@@ -815,10 +1388,22 @@ local function Sweep(frame, depth)
     end
 end
 
+-- EllesmereUI's meter sets a name only when it changes, and after a fight the label can keep a
+-- name OnAir can't read back: asking it to set every name again is the only sure way to show the
+-- right one (masked while live, the real one after).
+local function RedrawMeterNames()
+    local modules = _G.EllesmereUI and _G.EllesmereUI._ModuleNS
+    local dm = type(modules) == "table" and modules.EllesmereUIDamageMeters
+    if type(dm) == "table" and type(dm.RefreshNames) == "function" then
+        pcall(dm.RefreshNames)
+    end
+end
+
 function Hide.Meters()
     if not Where("meters") then
         return
     end
+    RedrawMeterNames()
     Sweep(_G.DamageMeter, 1)
     for i = 1, 8 do
         Sweep(_G["EllesmereUIDMFrame" .. i], 1)
@@ -831,7 +1416,7 @@ end
 -- hitch.
 local queue = {}
 local sweeper = CreateFrame("Frame")
-local SWEEP_STEP = 300
+local SWEEP_BUDGET = 4 -- milliseconds per frame
 
 local function SweepFrame(frame)
     if not Usable(frame) then
@@ -848,7 +1433,8 @@ local function SweepFrame(frame)
 end
 
 local function SweepStep()
-    for _ = 1, SWEEP_STEP do
+    local start = Utils.Clock()
+    repeat
         local frame = table.remove(queue)
         if not frame or not OA.live then
             wipe(queue)
@@ -857,7 +1443,7 @@ local function SweepStep()
         end
         -- One frame at a time, protected: an odd frame can't stop the rest.
         pcall(SweepFrame, frame)
-    end
+    until Utils.Clock() - start >= SWEEP_BUDGET
 end
 
 function Hide.SweepUI()
@@ -934,15 +1520,19 @@ function Hide.Stop()
     sweeper:SetScript("OnUpdate", nil)
     wipe(npcLabel)
     wipe(waiting)
+    wipe(waitedOn)
+    wipe(platesDue)
+    waitingCount = 0
     Utils.Guard("put back", PutBack)()
+    RedrawMeterNames()
     Hide.RestoreCVars()
     Hide.UnmuteAll()
 end
 
--- Units changed: refresh the frames that show them.
-function Hide.OnUnitChanged()
+-- Units changed: refresh the frames that show them ("target", "focus", "targettarget", ...).
+function Hide.OnUnitChanged(which)
     if OA.live then
-        Hide.UnitFrames()
+        Hide.UnitFrames(which)
     end
 end
 
@@ -961,6 +1551,30 @@ function Hide.Explain(obj)
     end
     if meterKind[obj] then
         parts[#parts + 1] = "meter=" .. tostring(meterKind[obj])
+        -- What the row's data says (to see why a row isn't recognized).
+        local src = RowSource(obj)
+        if not src then
+            local key = RowKey(obj)
+            parts[#parts + 1] = "icon=" .. (key and "yes" or "none")
+            parts[#parts + 1] = "known=" .. (key and bySpec[key] and "yes" or "no")
+            local ok, mine = pcall(MyIcon, obj)
+            parts[#parts + 1] = "mine=" .. tostring(ok and mine)
+        else
+            local own = src.isLocalPlayer
+            parts[#parts + 1] = "own=" .. (own == nil and "nil" or (IsSecret(own) and "secret" or tostring(own)))
+            local class, spec = src.classFilename, src.specIconID
+            parts[#parts + 1] = "class=" .. (class == nil and "nil" or (IsSecret(class) and "secret" or tostring(class)))
+            parts[#parts + 1] = "spec=" .. (spec == nil and "nil" or (IsSecret(spec) and "secret" or tostring(spec)))
+            local key = SpecKey(src)
+            parts[#parts + 1] = "known=" .. (key and bySpec[key] and "yes" or "no")
+            local keys = {}
+            for k in pairs(src) do
+                if type(k) == "string" and #keys < 12 then
+                    keys[#keys + 1] = k
+                end
+            end
+            parts[#parts + 1] = "fields=" .. table.concat(keys, ",")
+        end
     end
     return #parts > 0 and table.concat(parts, " ") or "untouched"
 end

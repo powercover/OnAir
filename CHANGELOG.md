@@ -76,3 +76,29 @@
 - New console: pages grouped as Live / Privacy / Production, page headers, a status strip, smoother
   motion (pages glide in, cards appear in turn, a stretching rail marker, springy switches).
 - Sliders: drag or use the arrow keys; the mouse wheel scrolls the page instead.
+- Nameplate cast targets show who the caster targets: your alias or a group member's (anyone else
+  stays hidden).
+- Damage meter rows keep the alias in combat: your own row, and players OnAir saw before the fight
+  (by class and spec). Names learned after a row was drawn are fixed on it too.
+- Tucking the Deck slides it fully off screen and leaves a small handle with the on-air status
+  (the status can be turned off). Works in every skin.
+- Lighter while live: big lists (guild, communities, friends, other addons' saved data) are read a
+  slice per frame and at most every few seconds; new nameplates, chat lines and names learned on the
+  way are handled once each instead of re-checking the whole screen.
+- /onair check lists the damage meter names and OnAir's own errors.
+- Fixed: going live in combat stopping halfway, the stream chat erroring on hidden boss lines, and
+  the go-live slate not playing after quick on/off.
+- Names above heads while live: players of your faction get name-only plates that read their alias,
+  your target too (the game always shows a target's own name otherwise). Inside dungeons and raids
+  the game locks those plates, so names stay off there. A target from the other faction still shows
+  its real name: the game gives it no plate to replace it with.
+- Pet tooltips read "<owner's alias>'s Pet" and the owner line their alias.
+- One-word names of other guilds and communities ("Progress") are replaced only where they stand
+  alone (a guild line), not inside other text.
+- The game settings OnAir changes while live come back after; one you change yourself while live
+  keeps your new value.
+- Blank name font (Hide page, off by default): no names above any head (players, pets, NPCs and
+  yours, a target from the other faction too), live or not. The game reads its name font only when
+  you log in, so a switch either way shows after you log out and back in (or restart the game);
+  /reload is not enough. The page says where it stands, and /onair check shows the name fonts.
+- Fixed: stream chat lines were centered; they start on the left.

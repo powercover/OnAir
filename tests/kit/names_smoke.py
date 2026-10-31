@@ -26,7 +26,7 @@ ITEM_WRITTEN_BY = "Written by %s"
 DB = r"""
 OA.db = { me = "The Star", theme = "film", crew = { mode = "template", template = "{me}'s Crew {n}" },
   others = { mode = "cast", template = "Extra #{n}" }, petTemplate = "{owner}'s Pet",
-  guildAlias = "{me}'s Studio", otherGuild = "Studio {n}",
+  guildAlias = "{me}'s Studio", otherGuild = "Studio {n}", communityTemplate = "Community {n}",
   who = { me = true, crew = true, others = true, friends = true, guilds = true, pets = true },
   custom = { ["Duo"] = "My Partner" }, assigned = {}, assignedKind = {}, counters = {}, myChars = {} }
 OA.Names.Init()
@@ -45,6 +45,14 @@ RETAIL = [
     ('OA.Names.Add("Duo", nil, "other")', "Duo joined", "My Partner joined"),
     ('OA.Names.AddBNet(7, "|Kp12|k", "Zed#1234", nil)', "|Kp12|k (Zed#1234) online", None),
     ('OA.Names.AddGuild("Bob Squad", true)', "<Bob Squad>", "<The Star's Studio>"),
+    # a one-word guild of someone else: only where the text is the guild itself
+    ('OA.Names.AddGuild("Progress", false)', "Raider.IO Raid Progress", "Raider.IO Raid Progress"),
+    (None, "<Progress>", "<Studio 1>"),
+    (None, "Progress-TwistingNether", "Studio 1"),
+    (None, "|cff40ff40<Progress>|r", "|cff40ff40<Studio 1>|r"),
+    ('OA.Names.AddGuild("Night Watch Crew", false)', "joined Night Watch Crew today", "joined Studio 2 today"),
+    ('OA.Names.AddCommunity("Mythic")', "Mythic+ Score", "Mythic+ Score"),
+    ('OA.Names.AddGuild("Legacy", true)', "our Legacy raid", "our The Star's Studio raid"),
     (None, "|TInterface\\Icons\\Bob:14|t Bob", "|TInterface\\Icons\\Bob:14|t The Star's Crew 1"),
     (None, "12345 / 99%", "12345 / 99%"),
     ('OA.Names.AddOwnBattleTag("Nimbus#2468")', "Nimbus#2468", "The Star"),

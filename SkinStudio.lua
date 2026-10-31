@@ -622,17 +622,17 @@ end
 
 ---------------------------------------------------------------------------------------------- deck
 
--- The tab a tucked Deck leaves on screen: a small arrow.
+-- The handle a tucked Deck leaves on screen: an arrow and, if wanted, the broadcast's state (a
+-- dot and its word). The Deck lays it out.
 function skin.DeckTab(frame)
     local tab = CreateFrame("Frame", nil, frame)
-    local bg = Kit.Rect(tab, C.raised, "ARTWORK")
+    local bg = Kit.Rect(tab, { C.bg[1], C.bg[2], C.bg[3], 0.94 }, "BACKGROUND")
     bg:SetAllPoints()
+    tab.edges = Kit.Border(tab, C.line)
     tab.arrow = Kit.Icon(tab, "Chevron", 10, C.text)
-    tab.arrow:SetPoint("CENTER")
-    local dot = Kit.Shape(tab, "Dot", C.red, "OVERLAY")
-    dot:SetSize(5, 5)
-    dot:SetPoint("CENTER", tab.arrow, "CENTER", 0, 0)
-    dot:SetAlpha(0.8)
+    tab.dot = Kit.Shape(tab, "Dot", C.red, "OVERLAY")
+    tab.dot:SetSize(6, 6)
+    tab.word = Kit.Text(tab, 10, C.text)
     tab:SetAlpha(0)
     return tab
 end

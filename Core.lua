@@ -25,6 +25,8 @@ local DEFAULTS = {
     npc = { mode = "real", enemy = L["Enemy"], friendly = L["NPC"], boss = L["Boss"] },
     who = { me = true, crew = true, others = true, friends = true, guilds = true, pets = true },
     where = { chat = true, clearChat = true, nameplates = true, tooltips = true, meters = true, interface = true },
+    -- No names above heads at all: the game takes a blank name font at login (see Hide.lua).
+    blankNames = false,
     custom = {},
     assigned = {},
     assignedKind = {},
@@ -88,17 +90,18 @@ local function Start(atLogin, rehearsal)
     OA.live = true
     OA.rehearsal = rehearsal and true or false
     OA.db.live = not rehearsal
-    OA.Collect.All()
-    OA.Hide.Start()
+    -- Each part on its own: one failing (a frame locked in combat) can't stop the rest.
+    Utils.Guard("go live: names", OA.Collect.All)()
+    Utils.Guard("go live: hide", OA.Hide.Start)()
     if not rehearsal then
-        OA.Chat.OnGoLive(atLogin)
-        OA.Moments.OnGoLive(atLogin)
-        OA.Shield.OnGoLive()
+        Utils.Guard("go live: chat", OA.Chat.OnGoLive)(atLogin)
+        Utils.Guard("go live: moments", OA.Moments.OnGoLive)(atLogin)
+        Utils.Guard("go live: shield", OA.Shield.OnGoLive)()
     else
-        OA.Chat.Start()
+        Utils.Guard("go live: chat", OA.Chat.Start)()
     end
-    OA.Camera.Update()
-    OA.StreamChat.OnGoLive()
+    Utils.Guard("go live: camera", OA.Camera.Update)()
+    Utils.Guard("go live: stream chat", OA.StreamChat.OnGoLive)()
     Notify()
 end
 
@@ -192,8 +195,10 @@ local HANDLERS = {
         Names.Init()
         Names.OnChanged = OA.Hide.Rescrub
         OA.Collect.Init()
+        Utils.Guard("name font", OA.Hide.NameFontAtLogin)()
     end,
     PLAYER_LOGIN = function()
+        Utils.Guard("name font", OA.Hide.NameFontAtLogin)()
         RememberMe()
         OA.Camera.Init()
         if OA.UI and OA.UI.Init then
@@ -208,6 +213,9 @@ local HANDLERS = {
         end
         OA.Shield.Init()
     end,
+    PLAYER_ENTERING_WORLD = function(isInitialLogin)
+        OA.Hide.NameFontEntered(isInitialLogin)
+    end,
     PLAYER_REGEN_ENABLED = function()
         OA.Hide.OnCombatEnd()
         OA.Camera.OnCombatEnd()
@@ -220,11 +228,12 @@ local HANDLERS = {
             OA.Hide.NamePlate(unit)
         end
     end,
-    PLAYER_TARGET_CHANGED = OA.Hide.OnUnitChanged,
-    PLAYER_FOCUS_CHANGED = OA.Hide.OnUnitChanged,
-    UNIT_TARGET = OA.Hide.OnUnitChanged,
-    GROUP_ROSTER_UPDATE = OA.Hide.OnUnitChanged,
-    UNIT_PET = OA.Hide.OnUnitChanged,
+    -- Only the frames that show what changed (UNIT_TARGET comes all through a fight).
+    PLAYER_TARGET_CHANGED = function() OA.Hide.OnUnitChanged("target") end,
+    PLAYER_FOCUS_CHANGED = function() OA.Hide.OnUnitChanged("focus") end,
+    UNIT_TARGET = function(unit) OA.Hide.OnUnitChanged(unit == "focus" and "focustarget" or "targettarget") end,
+    GROUP_ROSTER_UPDATE = function() OA.Hide.OnUnitChanged("group") end,
+    UNIT_PET = function() OA.Hide.OnUnitChanged("pet") end,
 }
 
 for event, fn in pairs(HANDLERS) do

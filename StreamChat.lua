@@ -82,11 +82,8 @@ local function Sender(chatType, author, ...)
 end
 
 local function Line(chatType, msg, author, ...)
-    if IsSecret(msg) then
-        -- Can't be read or combined with anything: shown as it is (a FontString can show it).
-        return msg
-    end
-    if type(msg) ~= "string" then
+    -- Hidden (secret) lines can't be checked for names: left out (see OnEvent).
+    if type(msg) ~= "string" or IsSecret(msg) then
         return nil
     end
     local sender = Sender(chatType, author, ...)
@@ -143,6 +140,8 @@ function Stream.ApplyLook()
     local db = DB()
     window.bg:SetColorTexture(C.bg[1], C.bg[2], C.bg[3], db.opacity or 0.92)
     smf:SetFontObject(Kit.Font(db.fontSize or 14, "OUTLINE"))
+    -- After the font: a font object brings its own alignment (centered), and lines start on the left.
+    smf:SetJustifyH("LEFT")
     smf:SetFading(db.fade ~= false)
     smf:SetTimeVisible(db.fadeAfter or 60)
     header:SetShown(db.header ~= false)
@@ -236,7 +235,6 @@ local function Build()
 
     smf = CreateFrame("ScrollingMessageFrame", nil, window)
     smf:SetPoint("BOTTOMRIGHT", -10, 8)
-    smf:SetJustifyH("LEFT")
     smf:SetMaxLines(250)
     smf:SetIndentedWordWrap(true)
     smf:SetHyperlinksEnabled(true)
@@ -284,8 +282,13 @@ local function OnEvent(_, event, msg, author, ...)
     if not window or not window:IsShown() or not wanted[chatType] then
         return
     end
+    -- In instance combat some lines come hidden from addons (a boss yell naming a player): they
+    -- can't be checked for names, so the stream chat leaves them out.
+    if Utils.IsSecret(msg) or Utils.IsSecret(author) then
+        return
+    end
     local line = Line(chatType, msg, author, ...)
-    if line == nil or line == "" then
+    if line == nil or Utils.IsSecret(line) or line == "" then
         return
     end
     pcall(smf.AddMessage, smf, line, Color(chatType))
