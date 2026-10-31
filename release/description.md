@@ -1,5 +1,3 @@
-# OnAir
-
 ### The broadcast studio inside World of Warcraft.
 
 ![How OnAir goes live](IMAGE_HOW_IT_WORKS)
@@ -23,6 +21,8 @@ For **Retail** and **WoW Forever**. One addon, no libraries.
 - **Made for creators.** Timestamps, screenshots and YouTube chapters, a clean stream chat, a shield against stream snipers, and a cinematic camera.
 - **Light.** No libraries. Big jobs are spread over many frames, and long lists are read only now and then.
 
+![Chat, plates, frames, meters, tooltips.](IMAGE_EVERYWHERE)
+
 ---
 
 ## Every name, an alias
@@ -37,6 +37,10 @@ For **Retail** and **WoW Forever**. One addon, no libraries.
 
 Give a player a fixed alias on the Custom page, like your duo partner. Try **Preview** before you go live: everything is masked like live, so you can check your screen first.
 
+![A cast your viewers can follow.](IMAGE_ALIASES)
+
+![Every frame, an alias.](IMAGE_FRAMES)
+
 ## Moments: one key for every highlight
 
 - Going live starts a clock at **00:00**, and a short ON AIR slate on screen marks the same 00:00 in your video, so the timecodes line up.
@@ -45,23 +49,35 @@ Give a player a fixed alias on the Custom page, like your duo partner. Try **Pre
 - **Tip:** bind the same key to *Save Replay* in OBS. One press gives you a clip and its timecode.
 - Export a session as **YouTube chapters** or a **marker list** for your video editor. Names in moments are already aliases, so they're safe to show.
 
+![One key: a timestamp and a screenshot.](IMAGE_MOMENTS)
+
 ## Shield: keep stream snipers out
 
 While you're live, whispers from strangers wait until you end (with an auto-reply if you like), and their invites, duels and trades are declined. Your zone, zone banners and minimap can stay hidden. Friends, your guild, your group and the players on your Custom page always get through.
+
+![Keep stream snipers out.](IMAGE_SHIELD)
 
 ## Stream chat
 
 A clean chat window over yours while live. It shows only what you pick (NPC talk, boss emotes, loot by default), with names already swapped. Your real chat keeps running underneath.
 
+![A clean chat for your viewers.](IMAGE_STREAM_CHAT)
+
 ## Camera
 
 Cinematic presets, zoom, field of view, shoulder offset, tilt, smoother follow and a slow orbit (left or right, stopping when you move if you like). Use it always or only while live. Your own camera settings come back after.
+
+![A cinematic camera, built in.](IMAGE_CAMERA)
 
 ## The Deck and four looks
 
 The **Deck** is a small control bar that stays on screen when you hide the UI (Alt+Z): go live, hide the UI, camera, orbit, mark, edit layout. Rest the mouse on a button for quick settings. It tucks away to a small handle that still shows if you're on air.
 
+![Run the show with the UI hidden.](IMAGE_DECK)
+
 Pick a look: a **camera viewfinder**, a **vision mixer**, a **film slate** or a clean **studio** console. The console, the Deck, the stream chat and the go-live moment all follow.
+
+![Pick your studio.](IMAGE_LOOKS)
 
 ## Names above heads
 
@@ -81,6 +97,8 @@ It was built and tested alongside popular UI and quality-of-life addons, and che
 - **Leatrix Plus**, **Narcissus**, **Syndicator**, **WhisperMessenger**, **AlterEgo**: names they show or keep from earlier sessions.
 
 Names that only other addons remember (your alts, past key groups, whisper contacts) are learned when you go live, so they're covered from the first second. Found a name that slips through? `/onair check` shows where it is.
+
+![Meters too, even in combat.](IMAGE_METERS)
 
 ## What the game doesn't allow
 

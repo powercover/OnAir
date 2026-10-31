@@ -2,7 +2,10 @@
 
 Everything in this folder is for the project pages. None of it goes in the addon zip.
 
-- `description.md`: the long description, in Markdown (paste it on both sites).
+- `description.md`: the long description, in Markdown, with an `IMAGE_...` placeholder for each
+  gallery image. `description-curseforge.md` and `description-wago.md` are the same text with each
+  site's image addresses, ready to paste (`python tests/kit/make_descriptions.py` writes them; the
+  addresses are in that script).
 - `logo.gif`: the project logo, animated: 400 x 400, a 6-second loop of the lamp switching off and
   back on, with a gleam across the glass. CurseForge plays a GIF logo (Better Great Vault's does).
   The first frame is the lit lamp, so a site that shows one frame still shows the logo. `logo.png`
@@ -29,12 +32,12 @@ the changelog first, and says if a file isn't committed yet.
 
 1. Create a project: World of Warcraft, Addons.
 2. Name: **OnAir**. If the address "onair" is taken, pick another one (the name can stay OnAir).
-3. Summary: see below. Description: paste `description.md` as it is, in the editor's Markdown mode.
+3. Summary: see below. Description: paste `description-curseforge.md` as it is, in the editor's
+   Markdown mode.
 4. Logo: `logo.gif`. Category: Audio & Video (add Chat & Communication if you like).
-5. Images: upload everything in `gallery/`, in order (`01-go-live` first: it's the cover). Then
-   open the uploaded `00-how-it-works.gif`, copy its address (it starts with
-   `https://media.forgecdn.net/`), and in the description put it in place of `IMAGE_HOW_IT_WORKS`
-   (under the tagline): the loop shows how OnAir works before anyone reads a word.
+5. Images: upload everything in `gallery/`, in the order of `IMAGES` in
+   `tests/kit/make_descriptions.py` (`01-go-live` first: it's the cover). The descriptions show
+   them by their addresses: after uploading a new image, put its address in that script and run it.
 6. License: All Rights Reserved (the same as `LICENSE.txt` and the TOC).
 7. No file to upload: pushing the version tag does it (see "Automatic uploads" below). Note the
    project ID on the project page.
@@ -42,10 +45,10 @@ the changelog first, and says if a file isn't committed yet.
 
 ## 3. Wago (addons.wago.io)
 
-1. In the developer dashboard, create an addon: the same name, summary and description. Logo:
-   `logo.gif` (if Wago won't take a GIF, `logo.png`).
-2. Add the same gallery images. In the description, put the Wago address of `00-how-it-works.gif`
-   (it starts with `https://cdn.wago.io/`) in place of `IMAGE_HOW_IT_WORKS`, as on CurseForge.
+1. In the developer dashboard, create an addon: the same name and summary, and
+   `description-wago.md` as the description. Logo: `logo.gif` (if Wago won't take a GIF,
+   `logo.png`).
+2. Add the same gallery images, in the same order.
 3. No file to upload here either: the tag does it. Note the addon's ID (8 letters and digits,
    under its name on the dashboard).
 
