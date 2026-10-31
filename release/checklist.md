@@ -84,7 +84,7 @@ zip and uploads it to both sites and to the GitHub release when a version tag is
 versions come from the TOC's `## Interface` line (16001 makes it a WoW Forever file too), the notes
 from `CHANGELOG.md`. It needs:
 
-1. The repository: `powercover/OnAir` on GitHub (private).
+1. The repository: `powercover/OnAir` on GitHub (public).
 2. The project IDs in `OnAir.toc`: `## X-Curse-Project-ID: <number>` and `## X-Wago-ID: <id>`.
    They aren't secret.
 3. An API token from each site, saved in the repository's secrets as `CF_API_KEY` and
