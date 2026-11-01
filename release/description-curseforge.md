@@ -2,9 +2,9 @@
 
 ![How OnAir goes live](https://media.forgecdn.net/attachments/2130/704/00-how-it-works-gif.gif)
 
-**Go live without giving anyone away.** One click, and every player name on your screen becomes a name that fits your show: in chat, on nameplates, frames, tooltips and meters, even inside other addons. One more click, and it's all back. No reload.
+**Go live without giving anyone away.** OnAir is a streamer mode for streaming and recording World of Warcraft. One click, and every player name on your screen becomes a name that fits your show: in chat, on nameplates, frames, tooltips and meters, even inside other addons. One more click, and it's all back. No reload.
 
-Made for streamers and video makers: a cast your viewers can follow, a highlight key for your edit, a shield against stream snipers, a cinematic camera and a clean chat for your audience. One addon, for **Retail** and **WoW Forever**.
+Made for streamers and video makers: a cast your viewers can follow, a highlight key for your edit, a shield against stream snipers, cinematic camera tools and a clean chat for your audience. One addon, for **Retail** and **WoW Forever**.
 
 > OnAir doesn't record video. Keep OBS, Streamlabs or your graphics card's recorder: OnAir gets the game ready for the camera.
 
@@ -16,6 +16,8 @@ Made for streamers and video makers: a cast your viewers can follow, a highlight
 - **Nothing slips through.** Chat, nameplates, unit and raid frames, tooltips, damage meters, friends, guild, group finder and mail. Other addons' text too.
 - **Even in combat.** Where the game hides names from addons, OnAir covers the text instead.
 - **One key, every highlight.** Timestamps, screenshots and YouTube chapters, ready when the stream ends.
+- **Cinematic tools, built in.** Smooth zoom, the game's hidden action camera, orbit and presets. No console commands, no extra addons.
+- **Change it mid-recording.** Rest the mouse on the Deck for a second and its quick options open, even with the UI hidden.
 - **Stream snipers stay out.** Strangers' whispers wait, and their invites, duels and trades bounce while you're live.
 - **Back in one click.** End the broadcast and real names return at once. Every game setting OnAir changed comes back as you had it.
 - **It checks itself.** `/onair check` hunts for any real name left on your screen.
@@ -42,7 +44,7 @@ Don't just hide names. Cast them.
 
 ## One key. Every highlight.
 
-Your edit starts while you play.
+Your edit starts while you play: OnAir keeps a record of every highlight while you stream or record.
 
 - Going live starts a clock at **00:00**, and an ON AIR slate marks the same moment in your video. Your timecodes line up.
 - **Boss pulls, kills and wipes, Mythic+ keys, deaths, levels, achievements, epic loot and PvP** mark themselves.
@@ -64,15 +66,24 @@ A clean chat window sits on top of yours while live. It shows only what you pick
 
 ![A clean chat for your viewers.](https://media.forgecdn.net/attachments/2130/710/shot-stream-chat-png.png)
 
-## Cinematic camera, built in
+## Cinematic tools, built in
 
-Intros, outros, AFK screens, transmog shots: get the shot without another tool. Pick a preset (**Cinematic**, **Over the shoulder**, **Wide**) or set zoom, field of view, shoulder offset and tilt yourself. Add smoother follow and a slow orbit that stops when you move. Use it always or only while live. Your own camera comes back after.
+Intros, outros, AFK screens, transmog shots, slow orbits around your character: get the shot without another tool.
+
+- **One-click presets:** Cinematic, Over the shoulder and Wide.
+- **Smooth camera:** a slower, smoother zoom on the mouse wheel and a smoother follow, so the picture glides instead of jumping.
+- **The game's hidden action camera** (WoW calls it experimental): shoulder offset, tilt and head movement, with no console commands to type.
+- **Wider shots:** zoom out further than the game's default, and set the field of view.
+- **Orbit:** the camera circles your character, left or right, at the speed you pick. It can stop when you move or grab the camera.
+- **Your camera is safe:** use the tools always or only while live. Your own settings are saved first and come back after, even after a crash.
 
 ![A cinematic camera, built in.](https://media.forgecdn.net/attachments/2130/712/06-camera-png.png)
 
 ## Run the show with the UI hidden
 
-Press Alt+Z for a clean picture, and the **Deck** stays: go live, hide the UI, camera, orbit, mark and layout, one click each. Rest the mouse on a button for quick settings. Not needed? It tucks away into a small handle that still shows if you're on air.
+Press Alt+Z for a clean picture, and the **Deck** stays: go live, hide the UI, camera, orbit, mark and layout, one click each.
+
+**Quick options on hover.** Rest the mouse on a Deck button for a second and its options open right beside it, no console needed: the camera mode, preset and sliders; orbit direction, speed and when it stops; mark now and screenshots; the broadcast clock and preview; snapping and how the Deck hides. Change things mid-recording, with the UI still hidden. Not needed? The Deck fades, or tucks away into a small handle that still shows if you're on air.
 
 ![Run the show with the UI hidden.](https://media.forgecdn.net/attachments/2130/714/08-deck-png.png)
 

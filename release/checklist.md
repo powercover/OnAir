@@ -54,8 +54,11 @@ the changelog first, and says if a file isn't committed yet.
 
 ## Summary (both sites)
 
-> Streamer mode for WoW: every player name becomes an alias, everywhere. Plus one-key timestamps,
-> screenshots, YouTube chapters and a shield against stream snipers.
+> Streamer mode for streaming and recording: every player name becomes an alias. One key keeps a
+> record of each highlight for your edit. Stream snipers stay out.
+
+It holds every word people search for (streamer mode, streaming, stream, recording, record): site
+search reads the name and the summary first.
 
 ## Screenshots from the game
 
