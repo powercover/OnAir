@@ -165,20 +165,38 @@ def page_logo_gif(size=400):
             tile = Image.new("RGBA", (u, u), INK)
             drawn[pw, gleam] = draw_lamp(tile, box, pw, gleam).resize((size, size), Image.LANCZOS).convert("RGB")
         frames.append(drawn[pw, gleam])
-    # One palette for every frame, so the lit frames stay identical (the GIF stores them once) and
-    # nothing shimmers. Most of it is the lit lamp's, which shows nearly all the time, so its glow
-    # doesn't band; the rest comes from the dark, dimming, flickering, flaring and gleaming lamp.
+    # One palette for every frame, so nothing shimmers. Most of it is the lit lamp's, which shows
+    # nearly all the time, so its glow doesn't band; the rest comes from the dark, dimming,
+    # flickering, flaring and gleaming lamp; one place is left for a twin of the corner's color.
     others = [frames[i] for i in (80, 70, 71, 72, 91, 95, 96, 112)]
     sheet = Image.new("RGB", (size, size * len(others)))
     for i, f in enumerate(others):
         sheet.paste(f, (0, i * size))
     lit = frames[0].quantize(colors=168, method=Image.Quantize.MEDIANCUT).getpalette()[:168 * 3]
-    rest = sheet.quantize(colors=88, method=Image.Quantize.MEDIANCUT).getpalette()[:88 * 3]
+    rest = sheet.quantize(colors=87, method=Image.Quantize.MEDIANCUT).getpalette()[:87 * 3]
     palette = Image.new("P", (1, 1))
     palette.putpalette(lit + rest)
     gif = [f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames]
+    # Every frame lasts the same 40 ms, as in Better Great Vault's emblem. CurseForge's project page
+    # played this logo far too slowly while the encoder merged repeated frames into long ones (the
+    # lit lamp's into one of 2.8 seconds). A frame the same as the one before swaps its corner
+    # pixel to the twin color: it looks the same, but stays a frame of its own.
+    corner = gif[0].getpixel((0, 0))
+    colors = lit + rest + (lit + rest)[corner * 3:corner * 3 + 3]
+    twin, flip, last = len(colors) // 3 - 1, False, None
+    for g in gif:
+        g.putpalette(colors)
+        data = g.tobytes()
+        if data == last:
+            flip = not flip
+        last = data
+        if flip:
+            g.putpixel((0, 0), twin)
     path = os.path.join(ROOT, "release", "logo.gif")
-    gif[0].save(path, save_all=True, append_images=gif[1:], duration=1000 // fps, loop=0, optimize=True)
+    # Not optimize: that gives each frame its own palette, the twin then counts as the same color,
+    # and the repeated frames merge again.
+    gif[0].save(path, save_all=True, append_images=gif[1:], duration=1000 // fps, loop=0, disposal=1,
+                optimize=False)
     print(f"wrote {path}: {len(gif)} frames, {os.path.getsize(path) // 1024} KB")
 
 
