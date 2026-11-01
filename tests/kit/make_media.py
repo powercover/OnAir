@@ -176,6 +176,10 @@ def page_logo_gif(size=400):
     rest = sheet.quantize(colors=87, method=Image.Quantize.MEDIANCUT).getpalette()[:87 * 3]
     palette = Image.new("P", (1, 1))
     palette.putpalette(lit + rest)
+    # The loop starts on the last lit frame, just before the lamp switches off. CurseForge's project
+    # page showed the logo still while its first frames were all alike (and it gives every frame
+    # the first one's length); the first frame is also what a still copy shows.
+    frames = frames[69:] + frames[:69]
     gif = [f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames]
     # Every frame lasts the same 40 ms, as in Better Great Vault's emblem. CurseForge's project page
     # played this logo far too slowly while the encoder merged repeated frames into long ones (the
