@@ -997,6 +997,36 @@ local function IsEuiNameLabel(fs)
     return false
 end
 
+-- EllesmereUI's nameplate cast label (plate.castName, a few frames below the plate): it shows the
+-- spell, and after a kick "Interrupted (Name)" while its plate is marked interrupted.
+local INTERRUPTED = _G.INTERRUPTED or "Interrupted"
+local castPlate = setmetatable({}, { __mode = "k" }) -- label -> its plate, or false
+
+local function CastPlate(fs)
+    local plate = castPlate[fs]
+    if plate == nil then
+        plate = false
+        local holder = fs:GetParent()
+        for _ = 1, 4 do
+            if not holder then
+                break
+            end
+            if rawget(holder, "castName") == fs then
+                plate = holder
+                break
+            end
+            holder = holder:GetParent()
+        end
+        castPlate[fs] = plate
+    end
+    return plate
+end
+
+local function ShowsInterrupter(fs)
+    local plate = CastPlate(fs)
+    return plate ~= false and rawget(plate, "_interrupted") == true
+end
+
 local function OnText(obj)
     if busy or not OA.live or exempt[obj] then
         return
@@ -1010,6 +1040,7 @@ local function OnText(obj)
         return
     end
     local text = obj:GetText()
+    local secret = IsSecret(text)
     Reclaimed(obj, text)
     local label = npcLabel[obj]
     if label then
@@ -1048,6 +1079,13 @@ local function OnText(obj)
         elseif cast == "secret" then
             Mute(obj, "secret", IsSecret(obj:GetText()))
         end
+        -- EllesmereUI's cast bar after a kick: "Interrupted (Name)", the name being whoever
+        -- interrupted. In instance combat that name is a secret and can't be swapped, so while the
+        -- plate shows it, the label reads only "Interrupted".
+        if secret and ShowsInterrupter(obj) then
+            Rewrite(obj, text, INTERRUPTED)
+            return
+        end
     end
     if Where("meters") then
         local kind = meterKind[obj]
@@ -1060,7 +1098,6 @@ local function OnText(obj)
             return
         end
     end
-    local secret = IsSecret(text)
     if secret and not guard[obj] and IsEuiNameLabel(obj) then
         guard[obj] = true
     end
@@ -1084,8 +1121,11 @@ local function OnText(obj)
         Rewrite(obj, text, out)
         -- It showed a player's name: any frame's, also other addons' (raid frames, meters). In
         -- combat in an instance the game sends it names as secrets, which can't be replaced, so
-        -- from now on a secret here is hidden until readable text comes back.
-        guard[obj] = true
+        -- from now on a secret here is hidden until readable text comes back. Not a nameplate's
+        -- cast label: the name there was the interrupter's, and its secrets are spell names.
+        if not CastPlate(obj) then
+            guard[obj] = true
+        end
     end
     Wait(obj, out)
 end

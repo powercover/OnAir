@@ -29,6 +29,15 @@ local function Call(fn, ...)
     return nil
 end
 
+-- A count from the game, for a loop: 0 when it's missing or a secret. In instances the game hides
+-- some (a group finder listing's member count in a Mythic+ key), and a loop can't run to a secret.
+local function Count(n)
+    if type(n) ~= "number" or Utils.IsSecret(n) then
+        return 0
+    end
+    return n
+end
+
 function Collect.Group()
     Names.AddUnit("player")
     Names.AddUnit("pet")
@@ -73,7 +82,7 @@ function Collect.GuildRoster()
     if not IsInGuild() or type(GetNumGuildMembers) ~= "function" then
         return
     end
-    local total = GetNumGuildMembers() or 0
+    local total = Count(GetNumGuildMembers())
     if total == 0 then
         lastRun.guild = nil
     end
@@ -102,7 +111,7 @@ end
 function Collect.WoWFriends()
     local FL = C_FriendList
     if FL and FL.GetNumFriends then
-        local count = Call(FL.GetNumFriends) or 0
+        local count = Count(Call(FL.GetNumFriends))
         if count == 0 then
             lastRun["wow friends"] = nil
         end
@@ -116,7 +125,7 @@ function Collect.WoWFriends()
         end
     end
     if FL and FL.GetNumIgnores then
-        for i = 1, (Call(FL.GetNumIgnores) or 0) do
+        for i = 1, Count(Call(FL.GetNumIgnores)) do
             Names.AddFull(Call(FL.GetIgnoreName, i), "other")
         end
     end
@@ -136,7 +145,7 @@ function Collect.Friend(i)
     Names.AddNote(account.note)
     -- Every game account, not only the "main" one: with the Battle.net app open, the app can be
     -- the main one and the WoW character would never be learned.
-    for g = 1, (BN.GetFriendNumGameAccounts and Call(BN.GetFriendNumGameAccounts, i) or 0) or 0 do
+    for g = 1, Count(BN.GetFriendNumGameAccounts and Call(BN.GetFriendNumGameAccounts, i)) do
         local character = Character(Call(BN.GetFriendGameAccountInfo, i, g))
         if character then
             Names.AddBNet(account.bnetAccountID, account.accountName, account.battleTag, character)
@@ -148,7 +157,7 @@ function Collect.BNFriends()
     if type(BNGetNumFriends) ~= "function" then
         return
     end
-    local count = Call(BNGetNumFriends) or 0
+    local count = Count(Call(BNGetNumFriends))
     if count == 0 then
         lastRun["bn friends"] = nil
     end
@@ -271,7 +280,7 @@ function Collect.Who()
     if not (FL and FL.GetNumWhoResults) then
         return
     end
-    for i = 1, (Call(FL.GetNumWhoResults) or 0) do
+    for i = 1, Count(Call(FL.GetNumWhoResults)) do
         local info = Call(FL.GetWhoInfo, i)
         if info then
             Names.AddFull(info.fullName, "other")
@@ -292,7 +301,7 @@ local function LearnListing(id)
     end
     Names.AddFull(info.leaderName, "other")
     if LFG.GetSearchResultPlayerInfo then
-        for i = 1, info.numMembers or 0 do
+        for i = 1, Count(info.numMembers) do
             local player = Call(LFG.GetSearchResultPlayerInfo, id, i)
             if type(player) == "table" then
                 Names.AddFull(player.name, "other")
@@ -326,7 +335,7 @@ function Collect.Applicants()
     end
     for _, id in ipairs(Call(LFG.GetApplicants) or {}) do
         local info = Call(LFG.GetApplicantInfo, id)
-        for i = 1, (info and info.numMembers or 0) do
+        for i = 1, Count(info and info.numMembers) do
             Names.AddFull((Call(LFG.GetApplicantMemberInfo, id, i)), "other")
         end
     end
@@ -336,7 +345,7 @@ function Collect.Mail()
     if type(GetInboxNumItems) ~= "function" then
         return
     end
-    for i = 1, (Call(GetInboxNumItems) or 0) do
+    for i = 1, Count(Call(GetInboxNumItems)) do
         local _, _, sender = Call(GetInboxHeaderInfo, i)
         Names.AddFull(sender, "other")
     end
@@ -347,7 +356,7 @@ function Collect.Scoreboard()
     if not (PvP and PvP.GetScoreInfo) or type(GetNumBattlefieldScores) ~= "function" then
         return
     end
-    for i = 1, (Call(GetNumBattlefieldScores) or 0) do
+    for i = 1, Count(Call(GetNumBattlefieldScores)) do
         local info = Call(PvP.GetScoreInfo, i)
         if info then
             Names.AddFull(info.name, "other")

@@ -219,6 +219,7 @@ local HANDLERS = {
     PLAYER_REGEN_ENABLED = function()
         OA.Hide.OnCombatEnd()
         OA.Camera.OnCombatEnd()
+        OA.Shield.OnCombatEnd()
     end,
     PLAYER_REGEN_DISABLED = function()
         OA.Camera.StopOrbit()

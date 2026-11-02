@@ -4,14 +4,15 @@ local _, OA = ...
 -- shoulder offset and tilt, slower and smoother follow and zoom, and a slow orbit.
 -- They run Always, Only while live, or Off. Before the first change the camera's own values are
 -- saved, and they come back when the camera mode turns off (or the broadcast ends in "live" mode),
--- also after a crash, on the next login.
+-- also after a crash, on the next login. Zoom speed is apart: no preset changes it, and it stays
+-- on with the camera off too, until it goes back to the game default.
 OA.Camera = {}
 
 local Camera = OA.Camera
 local L = OA.L
 
 -- Each setting: its CVar(s), range, and how the slider shows it. `cvars` maps the value onto
--- every CVar it drives.
+-- every CVar it drives. `own`: yours alone, not part of the presets, and on with the camera off.
 Camera.SETTINGS = {
     { key = "zoom", cvar = "cameraDistanceMaxZoomFactor", min = 1, max = 2.6, step = 0.1,
         label = L["Max zoom distance"], format = function(v) return string.format(L["%d yards"], v * 15) end },
@@ -34,7 +35,7 @@ Camera.SETTINGS = {
         end },
     { key = "follow", cvar = "cameraYawSmoothSpeed", min = 30, max = 360, step = 10,
         label = L["Follow speed"], format = function(v) return string.format(L["%d (lower is smoother)"], v) end },
-    { key = "zoomSpeed", cvar = "cameraZoomSpeed", min = 2, max = 50, step = 1,
+    { key = "zoomSpeed", cvar = "cameraZoomSpeed", min = 2, max = 50, step = 1, own = true,
         label = L["Zoom speed"], format = function(v) return string.format(L["%d (lower is smoother)"], v) end },
 }
 
@@ -52,15 +53,24 @@ Camera.STYLES = {
 Camera.PRESETS = {
     { key = "default", text = L["Default"], values = {} },
     { key = "cinematic", text = L["Cinematic"], values = { zoom = 2.6, fov = 75, shoulder = 0.6, tilt = 0.35,
-        head = 0, follow = 90, zoomSpeed = 8, style = 4 } },
+        head = 0, follow = 90, style = 4 } },
     { key = "shoulder", text = L["Over the shoulder"], values = { zoom = 1.4, fov = 85, shoulder = 1.2, tilt = 0.25,
-        head = 0, follow = 150, zoomSpeed = 15, style = 4 } },
+        head = 0, follow = 150, style = 4 } },
     { key = "wide", text = L["Wide"], values = { zoom = 2.6, fov = 90, shoulder = 0, tilt = 0, head = 0,
-        follow = 180, zoomSpeed = 20 } },
+        follow = 180 } },
 }
 
 local function DB()
     return OA.db.camera
+end
+
+local function Refresh()
+    if OA.UI and OA.UI.Refresh then
+        OA.UI.Refresh()
+    end
+    if OA.Deck and OA.Deck.Refresh then
+        OA.Deck.Refresh()
+    end
 end
 
 function Camera.Exists(cvar)
@@ -86,9 +96,24 @@ function Camera.Get(key)
     return value
 end
 
+-- A camera setting changed while the camera is off turns it on (Always), so the change shows.
+function Camera.On()
+    local db = DB()
+    if db.mode == "off" then
+        db.mode = "always"
+        Refresh()
+    end
+end
+
 function Camera.Set(key, value)
-    DB()[key] = value
-    DB().preset = "custom"
+    local db = DB()
+    db[key] = value
+    -- Your own settings aren't part of a preset and work with the camera off. The rest make the
+    -- preset Custom and turn the camera on.
+    if not byKey[key].own then
+        db.preset = "custom"
+        Camera.On()
+    end
     Camera.Update()
 end
 
@@ -97,7 +122,9 @@ function Camera.UsePreset(key)
     for _, preset in ipairs(Camera.PRESETS) do
         if preset.key == key then
             for _, setting in ipairs(Camera.SETTINGS) do
-                db[setting.key] = preset.values[setting.key]
+                if not setting.own then
+                    db[setting.key] = preset.values[setting.key]
+                end
             end
             db.style = preset.values.style
             db.preset = key
@@ -106,14 +133,28 @@ function Camera.UsePreset(key)
     Camera.Update()
 end
 
--- CVar -> value, for what's set now.
-local function Wanted()
+-- Back to the game's defaults: the Default preset, and your own settings too.
+function Camera.Reset()
+    local db = DB()
+    for _, setting in ipairs(Camera.SETTINGS) do
+        if setting.own then
+            db[setting.key] = nil
+        end
+    end
+    Camera.UsePreset("default")
+end
+
+-- CVar -> value, for what's set now. With the camera off, only your own settings.
+local function Wanted(active)
     local db = DB()
     local wanted = {}
     for _, setting in ipairs(Camera.SETTINGS) do
-        if db[setting.key] ~= nil then
+        if db[setting.key] ~= nil and (active or setting.own) then
             wanted[setting.cvar] = db[setting.key]
         end
+    end
+    if not active then
+        return wanted
     end
     if db.style ~= nil then
         wanted.cameraSmoothStyle = db.style
@@ -146,12 +187,14 @@ local function QuietExperimentalPopup()
 end
 
 local pending
+local applied -- the camera was on at the last update
 
-local function Apply()
+local function Apply(active)
     local db = DB()
     db.saved = db.saved or {}
-    local wanted = Wanted()
-    -- A setting moved back to the game default: give back the value from before.
+    local wanted = Wanted(active)
+    -- Not wanted anymore (moved back to the game default, or the camera turned off): give back
+    -- the value from before.
     for cvar, value in pairs(db.saved) do
         if wanted[cvar] == nil then
             pcall(C_CVar.SetCVar, cvar, value)
@@ -170,14 +213,9 @@ local function Apply()
             pcall(C_CVar.SetCVar, cvar, tostring(value))
         end
     end
-end
-
-local function Restore()
-    local db = DB()
-    for cvar, value in pairs(db.saved or {}) do
-        pcall(C_CVar.SetCVar, cvar, value)
+    if next(db.saved) == nil then
+        db.saved = nil
     end
-    db.saved = nil
 end
 
 function Camera.Active()
@@ -192,12 +230,13 @@ function Camera.Update()
         return
     end
     pending = false
-    if Camera.Active() then
-        Apply()
-    else
+    local active = Camera.Active()
+    -- The camera turning off ends an orbit. One started with it off keeps going.
+    if applied and not active then
         Camera.StopOrbit()
-        Restore()
     end
+    applied = active
+    Apply(active)
 end
 
 function Camera.OnCombatEnd()
@@ -224,15 +263,6 @@ local function Call(name, ...)
     if type(fn) == "function" then
         pcall(fn, ...)
         return true
-    end
-end
-
-local function Refresh()
-    if OA.UI and OA.UI.Refresh then
-        OA.UI.Refresh()
-    end
-    if OA.Deck and OA.Deck.Refresh then
-        OA.Deck.Refresh()
     end
 end
 
@@ -353,9 +383,18 @@ function Camera.Init()
     if db.orbitSpeed == 0.05 and not db.orbitSpeedSet then
         db.orbitSpeed = 0.1
     end
+    -- Before 1.0.1 each preset brought its own zoom speed (8, 15, 20). One that came with a
+    -- preset isn't yours: it goes back to the game default, once.
+    if not db.zoomSpeedOwn then
+        db.zoomSpeedOwn = true
+        local speed = db.zoomSpeed
+        if db.preset ~= "custom" or speed == 8 or speed == 15 or speed == 20 then
+            db.zoomSpeed = nil
+        end
+    end
     -- Left applied by a session that ended without restoring (a crash): mode off means put back.
     if DB().saved and not Camera.Active() then
-        Restore()
+        Apply(false)
     end
     Camera.Update()
 end

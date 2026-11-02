@@ -789,10 +789,9 @@ local function BuildShield()
     T("Overhead", L["Hide zone banners"], L["The big zone name when you enter."], "banners", Apply)
     T("Nameplate", L["Hide the minimap"], L["Its map shows where you are."], "minimap", Apply)
 
-    local held = P.Note("")
-    P.OnRefresh(function()
+    P.Note(function()
         local count = OA.Shield.HeldCount()
-        held.text:SetText(count > 0 and string.format(L["%d whispers held so far."], count) or L["No whispers held."])
+        return count > 0 and string.format(L["%d whispers held so far."], count) or L["No whispers held."]
     end)
     P.Note(L["An addon can't delay your stream: set a stream delay in OBS too. Auto-replies wait outside boss encounters, when the game blocks addon chat."])
     P.Finish()
@@ -805,7 +804,7 @@ local function BuildCamera()
     local Camera = OA.Camera
     local cam = OA.db.camera
 
-    P.Choice({ label = L["When"], hint = L["Off leaves your camera alone. Always works without going live. While live switches with the broadcast. Your own camera settings come back when it turns off."],
+    P.Choice({ label = L["When"], hint = L["Off leaves your camera alone, all but the zoom speed below. Changing a camera setting turns it on. Always works without going live. While live switches with the broadcast. Your own camera settings come back when it turns off."],
         options = {
             { value = "off", text = L["Off"] },
             { value = "always", text = L["Always"] },
@@ -827,24 +826,33 @@ local function BuildCamera()
         get = function() return cam.preset end,
         set = function(v)
             if v ~= "custom" then
+                Camera.On()
                 Camera.UsePreset(v)
             end
             UI.Refresh()
         end })
 
-    P.Heading(L["Fine tune"])
-    for _, setting in ipairs(Camera.SETTINGS) do
-        P.Slider({ label = setting.label, min = setting.min, max = setting.max, step = setting.step, format = setting.format,
-            get = function() return Camera.Get(setting.key) end,
-            set = function(v) Camera.Set(setting.key, v) end,
-            enabled = function() return Camera.Exists(setting.cvar) end })
+    -- The camera's sliders: the preset's (own == false) or yours alone (own == true).
+    local function Sliders(own)
+        for _, setting in ipairs(Camera.SETTINGS) do
+            if (setting.own == true) == own then
+                P.Slider({ label = setting.label, min = setting.min, max = setting.max, step = setting.step, format = setting.format,
+                    get = function() return Camera.Get(setting.key) end,
+                    set = function(v) Camera.Set(setting.key, v) end,
+                    enabled = function() return Camera.Exists(setting.cvar) end })
+            end
+        end
     end
+
+    P.Heading(L["Fine tune"])
+    Sliders(false)
 
     P.Choice({ label = L["Follow style"], hint = L["How the camera swings behind you while you move."], options = Camera.STYLES,
         get = function() return Camera.Get("style") end,
         set = function(v)
             cam.style = v
             cam.preset = "custom"
+            Camera.On()
             Camera.Update()
             UI.Refresh()
         end })
@@ -853,8 +861,12 @@ local function BuildCamera()
         set = function(v)
             cam.focus = v
             cam.preset = "custom"
+            Camera.On()
             Camera.Update()
         end })
+
+    P.Heading(L["Zoom"], L["How fast the mouse wheel zooms. It's yours: presets don't change it, and it works with the camera off too."])
+    Sliders(true)
 
     P.Heading(L["Orbit"], L["A slow turn around your character for intros and outros. Stops when combat starts. On the Deck: left click orbits left, right click orbits right, the same click again or a middle click stops. Key binding: OnAir > Camera orbit."])
     P.Choice({ label = L["Direction"], options = { { value = "left", text = L["Turn left"] }, { value = "right", text = L["Turn right"] } },
@@ -875,7 +887,7 @@ local function BuildCamera()
     P.Buttons({
         { text = function() return Camera.IsOrbiting() and L["Stop orbit"] or L["Start orbit"] end, click = function() Camera.ToggleOrbit() end },
         { text = L["Back to game defaults"], width = 200, click = function()
-            Camera.UsePreset("default")
+            Camera.Reset()
             UI.Refresh()
         end },
     })

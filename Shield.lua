@@ -191,13 +191,68 @@ function Shield.RefreshPlaces()
     Names.SetHiddenPlaces(places)
 end
 
+-- The minimap: faded through its alpha (the map and every frame on it, at once, also in combat),
+-- and hidden as a frame too, since the game draws its blips (quests, mailbox, flight points)
+-- whatever the alpha. It's shown again after only if it was shown before. While live it's hidden
+-- again whenever something shows it: EllesmereUI's minimap shows it on its own, also through a
+-- secure driver, and OnShow catches every way. In combat a protected minimap can't be hidden
+-- (EllesmereUI's is): then it waits for the end of combat.
+local minimapWant, minimapOurs, minimapWasShown = false, false, false
+
+local function Locked(map)
+    return InCombatLockdown() and SafeBool(map.IsProtected, map) ~= false
+end
+
+local function SyncMinimap()
+    local map = _G.Minimap
+    if not map or Locked(map) then
+        return
+    end
+    if minimapWant then
+        if not minimapOurs then
+            minimapOurs, minimapWasShown = true, map:IsShown()
+        end
+        if map:IsShown() then
+            map:Hide()
+        end
+    elseif minimapOurs then
+        minimapOurs = false
+        if minimapWasShown then
+            map:Show()
+        end
+    end
+end
+
+if _G.Minimap then
+    _G.Minimap:HookScript("OnShow", function()
+        if minimapWant then
+            SyncMinimap()
+        end
+    end)
+end
+
+function Shield.OnCombatEnd()
+    SyncMinimap()
+end
+
+-- For /onair check: whether the minimap really is hidden (its blips show while it isn't).
+function Shield.MinimapState()
+    local map = _G.Minimap
+    if not map or not map:IsShown() then
+        return L["hidden"]
+    end
+    return Locked(map) and L["shown until combat ends (the game allows no hiding in combat)"] or L["shown"]
+end
+
 function Shield.Apply()
     local live = OA.live
     local db = DB()
     for _, name in ipairs(BANNERS) do
         OA.Hide.Mute(_G[name], "snipe", live and db.banners ~= false)
     end
-    OA.Hide.Mute(_G.Minimap, "snipe", live and db.minimap == true)
+    minimapWant = live and db.minimap == true
+    OA.Hide.Mute(_G.Minimap, "snipe", minimapWant)
+    SyncMinimap()
     Shield.RefreshPlaces()
 end
 

@@ -439,6 +439,10 @@ function Check.Run()
         for _, line in ipairs(rows) do
             report[#report + 1] = line
         end
+        if OA.db.shield.minimap then
+            report[#report + 1] = ""
+            report[#report + 1] = string.format(L["Minimap (Shield hides it): %s"], OA.Shield.MinimapState())
+        end
     else
         report[#report + 1] = L["Go live or start a preview to check the screen for real names."]
     end

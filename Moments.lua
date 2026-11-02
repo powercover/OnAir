@@ -463,9 +463,14 @@ end)
 
 ---------------------------------------------------------------------------------------------- export
 
+local NOTE_TIMES = 6 -- left-out times the note names; the rest it counts
+
 -- YouTube's rules: the first chapter at 00:00, at least three, each at least 10 seconds long.
+-- A moment less than 10 seconds after the chapter before is left out (YouTube would ignore the
+-- whole list). The second value says what's left out and why, for the window to show apart from
+-- the text you copy.
 function Moments.Chapters(session)
-    local lines = {}
+    local lines, left = {}, {}
     local last = -100
     local hours = ((session.moments[#session.moments] or {}).t or 0) >= 3600
     for _, moment in ipairs(session.moments) do
@@ -475,14 +480,24 @@ function Moments.Chapters(session)
             if t - last >= 10 then
                 lines[#lines + 1] = Moments.Format(t, hours) .. " " .. (#lines == 0 and L["Intro"] or moment.text)
                 last = t
+            else
+                left[#left + 1] = Moments.Format(moment.t, hours)
             end
         end
     end
-    if #lines < 3 then
-        lines[#lines + 1] = ""
-        lines[#lines + 1] = L["(YouTube needs at least 3 chapters, 10 seconds apart.)"]
+    local rule = #lines < 3 and L["YouTube needs at least 3 chapters, 10 seconds or more apart."]
+        or L["YouTube needs 10 seconds or more between chapters."]
+    local note
+    if #left > 0 then
+        local times = table.concat(left, ", ", 1, math.min(#left, NOTE_TIMES))
+        if #left > NOTE_TIMES then
+            times = string.format(L["%s and %d more"], times, #left - NOTE_TIMES)
+        end
+        note = string.format(L["Left out: %s. %s"], times, rule)
+    elseif #lines < 3 then
+        note = rule
     end
-    return table.concat(lines, "\n")
+    return table.concat(lines, "\n"), note
 end
 
 -- Every moment, for an editor: H:MM:SS, what, text.
@@ -494,10 +509,11 @@ function Moments.MarkerList(session)
     return table.concat(lines, "\n")
 end
 
--- A window with the text selected, ready for Ctrl+C (addons can't write the clipboard).
+-- A window with the text selected, ready for Ctrl+C (addons can't write the clipboard). A note,
+-- if any, shows above the text and isn't copied with it.
 local exportFrame
 
-function Moments.ShowExport(title, text)
+function Moments.ShowExport(title, text, note)
     if not exportFrame then
         local f = CreateFrame("Frame", "OnAirExport", UIParent)
         f:SetSize(520, 380)
@@ -521,11 +537,14 @@ function Moments.ShowExport(title, text)
         local hint = Kit.Text(f, 12, C.muted)
         hint:SetPoint("TOPLEFT", f.title, "BOTTOMLEFT", 0, -6)
         hint:SetText(L["Click the text, then press Ctrl+C to copy."])
+        f.note = Kit.Text(f, 12, C.amber)
+        f.note:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -4)
+        f.note:SetWidth(484)
+        f.note:SetWordWrap(true)
         local close = Kit.IconButton(f, "Close", 28, nil, nil, function() f:Hide() end)
         close:SetPoint("TOPRIGHT", -10, -10)
         local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-        scroll:SetPoint("TOPLEFT", 18, -60)
-        scroll:SetPoint("BOTTOMRIGHT", -36, 18)
+        f.scroll = scroll
         local box = CreateFrame("EditBox", nil, scroll)
         box:SetMultiLine(true)
         box:SetAutoFocus(false)
@@ -551,10 +570,21 @@ function Moments.ShowExport(title, text)
         tinsert(UISpecialFrames, "OnAirExport")
         exportFrame = f
     end
-    exportFrame.title:SetText(title)
-    exportFrame.text = text
-    exportFrame.box:SetText(text)
-    exportFrame:Show()
+    local f = exportFrame
+    f.title:SetText(title)
+    f.note:SetText(note or "")
+    f.note:SetShown(note ~= nil)
+    -- The text starts under the note, or right under the hint without one.
+    f.scroll:ClearAllPoints()
+    if note then
+        f.scroll:SetPoint("TOPLEFT", f.note, "BOTTOMLEFT", 0, -10)
+    else
+        f.scroll:SetPoint("TOPLEFT", 18, -60)
+    end
+    f.scroll:SetPoint("BOTTOMRIGHT", -36, 18)
+    f.text = text
+    f.box:SetText(text)
+    f:Show()
 end
 
 function Moments.OnGoLive(atLogin)

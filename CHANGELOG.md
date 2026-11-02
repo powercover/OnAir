@@ -1,5 +1,21 @@
 # OnAir
 
+## 1.0.1
+
+- Mythic+ keys: fixed an error from the group finder (in a key, the game hides some numbers from
+  addons).
+- EllesmereUI nameplates: an interrupted cast reads "Interrupted", never the real name of the player
+  who kicked it.
+- Shield: "Hide the minimap" hides its icons too (quests, mail, flight points), also with
+  EllesmereUI's minimap. In combat the game doesn't let addons hide it, so it hides when combat ends.
+  /onair check shows where it stands.
+- Shield page: the text no longer overlaps.
+- Camera: zoom speed is now yours. Switching presets keeps it, and it works with the camera off. A
+  zoom speed that came with a preset goes back to the game's once. Changing any other camera setting
+  while the camera is off turns it on.
+- YouTube chapters: a moment less than 10 seconds after the chapter before is left out (YouTube's
+  rule), and the window now says which. That note is no longer part of the text you copy.
+
 ## 1.0.0
 
 The first release.

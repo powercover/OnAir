@@ -38,9 +38,16 @@ function base:Show() self._shown = true; if self._scripts and self._scripts.OnSh
 function base:Hide() local was = self._shown; self._shown = false; if was and self._scripts and self._scripts.OnHide then self._scripts.OnHide(self) end end
 function base:SetShown(v) if v then self:Show() else self:Hide() end end
 function base:IsShown() return self._shown end
+function base:IsProtected() return self._protected == true end
 function base:IsVisible() return self._shown end
 function base:SetText(t) self._text = t end
-function base:SetFormattedText(f, ...) self._text = string.format(f, ...) end
+function base:SetFormattedText(f, ...)
+  -- as in the game: a secret among the values makes the whole text a secret
+  for i = 1, select("#", ...) do
+    if issecretvalue(select(i, ...)) then self._text = { __secret = true }; return end
+  end
+  self._text = string.format(f, ...)
+end
 function base:GetText() return self._text end
 function base:SetPoint(p, a, b, c, d) table.insert(self._points, { p, type(a) == "table" and a or self._parent }) end
 function base:ClearAllPoints() self._points = {} end
@@ -86,6 +93,8 @@ function base:Click(button) local fn = self:GetScript("OnClick"); if fn then fn(
 ASKED = {}
 function base:SetTexture(path) if type(path) == "string" then ASKED[path] = true end end
 function base:SetFont(path) if type(path) == "string" then ASKED[path] = true end end
+-- Whether long text wraps or gets cut off with "..." (the kit's text doesn't wrap unless told).
+function base:SetWordWrap(v) self._wrap = v end
 
 local VERBS = { "Set", "Get", "Is", "Enable", "Disable", "Register", "Unregister", "Clear", "Play", "Stop",
   "Start", "Raise", "Lower", "Add", "Insert", "Scroll", "Can", "Has", "Highlight" }
@@ -397,6 +406,41 @@ OA.GoLive(); assert(C_CVar.GetCVar("cameraFov") == "60", "live mode, live: appli
 OA.EndLive(); assert(C_CVar.GetCVar("cameraFov") == "90", "broadcast over: restored")
 assert(C_CVar.GetCVar("cameraDistanceMaxZoomFactor") == "1.9", "zoom restored")
 assert(OA.db.camera.saved == nil, "nothing left saved")
+-- zoom speed is yours: a preset switch keeps it, it stays on with the camera off (an orbit started
+-- then keeps going), Back to game defaults gives back the one from before; from 1.0.0, one that
+-- came with a preset goes and one you set stays. Any other setting changed turns the camera on.
+do
+  local modeBefore = cam.mode
+  C_CVar._v = {}
+  cam.mode = "always"; OA.Camera.UsePreset("cinematic")
+  OA.Camera.Set("zoomSpeed", 6)
+  local applied = C_CVar.GetCVar("cameraZoomSpeed") == "6" and cam.preset == "cinematic"
+  OA.Camera.UsePreset("wide")
+  local kept = C_CVar.GetCVar("cameraZoomSpeed") == "6" and cam.zoomSpeed == 6
+  cam.mode = "off"; OA.Camera.Update()
+  local off = C_CVar.GetCVar("cameraZoomSpeed") == "6" and C_CVar.GetCVar("cameraDistanceMaxZoomFactor") == "1.9"
+  OA.Camera.StartOrbit("left"); OA.Camera.Set("zoomSpeed", 4)
+  local orbit = OA.Camera.IsOrbiting() and C_CVar.GetCVar("cameraZoomSpeed") == "4" and cam.mode == "off"
+  OA.Camera.StopOrbit()
+  OA.Camera.Reset()
+  local reset = C_CVar.GetCVar("cameraZoomSpeed") == "20" and cam.zoomSpeed == nil and cam.saved == nil
+    and cam.mode == "off"
+  OA.Camera.Set("zoom", 2.2)
+  local wakes = cam.mode == "always" and cam.preset == "custom" and C_CVar.GetCVar("cameraDistanceMaxZoomFactor") == "2.2"
+  OA.Camera.Reset(); cam.mode = "off"; OA.Camera.Update()
+  cam.zoomSpeedOwn = nil; cam.preset = "cinematic"; cam.zoomSpeed = 8
+  OA.Camera.Init()
+  local migrated = cam.zoomSpeed == nil and C_CVar.GetCVar("cameraZoomSpeed") == "20"
+  cam.zoomSpeedOwn = nil; cam.preset = "custom"; cam.zoomSpeed = 12
+  OA.Camera.Init()
+  local yours = cam.zoomSpeed == 12 and C_CVar.GetCVar("cameraZoomSpeed") == "12"
+  OA.Camera.Reset()
+  cam.mode = modeBefore; OA.Camera.Update()
+  CAMERA_ZOOM_OK = applied and kept and off and orbit and reset and wakes and migrated and yours and cam.saved == nil
+  CAMERA_ZOOM_DBG = string.format("applied=%s kept=%s off=%s orbit=%s reset=%s wakes=%s migrated=%s yours=%s",
+    tostring(applied), tostring(kept), tostring(off), tostring(orbit), tostring(reset), tostring(wakes),
+    tostring(migrated), tostring(yours))
+end
 UI.ShowPage("camera", true); walkConsole()
 
 -- stream chat: only the picked kinds of lines, names aliased
@@ -433,6 +477,30 @@ for _, m in ipairs(session.moments) do kinds[#kinds + 1] = m.kind .. ":" .. m.te
 MOMENTS = table.concat(kinds, " | ")
 CHAPTERS = OA.Moments.Chapters(session)
 MARKERS = OA.Moments.MarkerList(session)
+-- YouTube chapters: a moment less than 10 seconds after the chapter before is left out (YouTube
+-- would ignore the whole list), and the window names it, apart from the text you copy
+do
+  local s = { moments = { { t = 0, kind = "start", text = "Broadcast starts" }, { t = 12, kind = "mark", text = "Marked" },
+    { t = 15, kind = "mark", text = "Marked" }, { t = 25, kind = "mark", text = "Marked" }, { t = 36, kind = "mark", text = "Marked" } } }
+  local text, note = OA.Moments.Chapters(s)
+  local listed = text == "00:00 Intro\n00:12 Marked\n00:25 Marked\n00:36 Marked"
+  local function once(s) return select(2, s:gsub("YouTube needs", "")) == 1 end
+  local named = type(note) == "string" and note:find("00:15", 1, true) ~= nil and once(note)
+  -- too few chapters left: still one sentence about YouTube's rules
+  local few, fewNote = OA.Moments.Chapters({ moments = { { t = 0, kind = "start", text = "Broadcast starts" },
+    { t = 6, kind = "mark", text = "Marked" }, { t = 30, kind = "mark", text = "Marked" } } })
+  local clean = few == "00:00 Intro\n00:30 Marked" and type(fewNote) == "string"
+    and fewNote:find("00:06", 1, true) ~= nil and once(fewNote)
+  OA.Moments.ShowExport("YouTube chapters", text, note)
+  local shown = OnAirExport.note:IsShown() and OnAirExport.note:GetText() == note and OnAirExport.box:GetText() == text
+    and OnAirExport.note._wrap == true
+  OA.Moments.ShowExport("OnAir check", "report")
+  local hidden = not OnAirExport.note:IsShown() and OnAirExport.box:GetText() == "report"
+  OnAirExport:Hide()
+  CHAPTER_NOTE_OK = listed and named and clean and shown and hidden
+  CHAPTER_NOTE_DBG = string.format("listed=%s named=%s clean=%s shown=%s hidden=%s", tostring(listed),
+    tostring(named), tostring(clean), tostring(shown), tostring(hidden))
+end
 assert(SHOTS > 0, "screenshots taken")
 UI.ShowPage("moments", true); walkConsole()
 
@@ -702,6 +770,78 @@ do
   EUI_RAID_DBG = string.format("start=%s only=%s readable=%s after=%s/%s", tostring(hiddenAtStart),
     tostring(onlyNames), tostring(readable), tostring(nameSlot:GetAlpha()), tostring(topName:GetAlpha()))
   EllesmereUI = nil
+end
+
+-- a group finder listing whose member count is a secret (in a Mythic+ key): read without an error
+-- (the guard would catch one and fail the run), and its leader is still learned
+do
+  local info = C_LFGList.GetSearchResultInfo
+  C_LFGList.GetSearchResultInfo = function() return { leaderName = "Keyleader-Kazzak", numMembers = { __secret = true } } end
+  OA.GoLive()
+  fire("LFG_LIST_SEARCH_RESULT_UPDATED", 9)
+  run(1)
+  LFG_SECRET_OK = not OA.Names.Scrub("Keyleader waves"):find("Keyleader")
+  OA.EndLive()
+  C_LFGList.GetSearchResultInfo = info
+end
+
+-- EllesmereUI's nameplate after a kick: "Interrupted (Name)" with a secret name reads only
+-- "Interrupted"; with a readable name it gets the alias; a secret spell name on the same label
+-- (no interrupt) is left alone
+do
+  local plate = CreateFrame("Frame", nil, UIParent)
+  plate.cast = CreateFrame("StatusBar", nil, plate)
+  plate.castTextFrame = CreateFrame("Frame", nil, plate.cast)
+  plate.castName = plate.castTextFrame:CreateFontString()
+  local kick = "|cffffffff%s (|r%s|cffffffff)|r"
+  OA.GoLive()
+  plate._interrupted = true
+  plate.castName:SetFormattedText(kick, "Interrupted", { __secret = true })
+  local secretKick = plate.castName:GetText() == "Interrupted"
+  plate.castName:SetFormattedText(kick, "Interrupted", "Bob")
+  local text = plate.castName:GetText()
+  local plainKick = type(text) == "string" and text:find("Interrupted") ~= nil and not text:find("Bob")
+  plate._interrupted = nil
+  plate.castName:SetText({ __secret = true })
+  local spellLeft = issecretvalue(plate.castName:GetText()) and plate.castName:GetAlpha() == 1
+  OA.EndLive()
+  EUI_INTERRUPT_OK = secretKick and plainKick and spellLeft
+  EUI_INTERRUPT_DBG = string.format("secret=%s plain=%s spell=%s", tostring(secretKick), tostring(plainKick), tostring(spellLeft))
+end
+
+-- Shield's minimap: hidden as a frame, not only faded (the game draws its blips whatever the
+-- alpha), kept hidden if something shows it while live, shown again after only if it was shown
+-- before; with a protected button on it in combat, hidden when combat ends
+do
+  local shield = OA.db.shield
+  shield.minimap = true
+  Minimap:Show()
+  OA.GoLive()
+  local hidden = not Minimap:IsShown() and Minimap:GetAlpha() == 0
+  Minimap:Show()
+  local kept = not Minimap:IsShown()
+  getmetatable(Minimap).__index.Show(Minimap)   -- shown past any hook on its methods (a secure driver)
+  kept = kept and not Minimap:IsShown()
+  OA.EndLive()
+  local back = Minimap:IsShown() and Minimap:GetAlpha() == 1
+  Minimap:Hide()
+  OA.GoLive(); OA.EndLive()
+  local yours = not Minimap:IsShown()
+  Minimap:Show()
+  local combat = InCombatLockdown
+  Minimap._protected = true
+  InCombatLockdown = function() return true end
+  OA.GoLive()
+  local waits = Minimap:IsShown() and Minimap:GetAlpha() == 0
+  InCombatLockdown = combat
+  OA.Shield.OnCombatEnd()
+  local after = not Minimap:IsShown()
+  OA.EndLive()
+  Minimap._protected = nil
+  shield.minimap = false
+  MINIMAP_OK = hidden and kept and back and yours and waits and after and Minimap:IsShown()
+  MINIMAP_DBG = string.format("hidden=%s kept=%s back=%s yours=%s waits=%s after=%s end=%s", tostring(hidden),
+    tostring(kept), tostring(back), tostring(yours), tostring(waits), tostring(after), tostring(Minimap:IsShown()))
 end
 
 -- group finder: a listing's leader and members are learned; an unnamed addon tooltip is scrubbed
@@ -1164,7 +1304,7 @@ def run(toc, look="viewfinder"):
                               "SNAP_FREE", "DONE_OK", "SNAP_RIGHT_CENTER", "SNAP_PIECE",
                               "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS",
                               "SNAP_MODES", "LIVE_DRAG", "FIRST_EDIT", "PANELS_OPENED",
-                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "EUI_RAID_NAMES", "EUI_RAID_DBG", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "METER_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
+                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "EUI_RAID_NAMES", "EUI_RAID_DBG", "LFG_SECRET_OK", "EUI_INTERRUPT_OK", "EUI_INTERRUPT_DBG", "MINIMAP_OK", "MINIMAP_DBG", "CAMERA_ZOOM_OK", "CAMERA_ZOOM_DBG", "CHAPTER_NOTE_OK", "CHAPTER_NOTE_DBG", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "METER_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
 
 
 # One login (or /reload) with the blank name font: what the game's name fonts hold after OnAir's
@@ -1275,6 +1415,7 @@ if __name__ == "__main__":
                                                            "death:", "loot:", "mark:")) and "Grey Rock" not in results["MOMENTS"]
                      and "Bob" not in results["MOMENTS"], "moments: every kind marked, grey loot skipped, names aliased"),
                     (results["CHAPTERS"].startswith("00:00 "), "chapters start at 00:00"),
+                    (results["CHAPTER_NOTE_OK"], "chapters: a moment under 10 seconds after the one before is left out and named in a wrapping note, apart from the copied text " + str(results["CHAPTER_NOTE_DBG"])),
                     (results["SHIELD_HELD"] is True and results["SHIELD_FRIEND"] is not True, "stranger whisper held, friend's through"),
                     (results["SHIELD_DECLINED"] == 2, "stranger invite and duel declined"),
                     (results["SHIELD_REPLY"] == "Sniper-Kazzak", "auto-reply sent to the stranger"),
@@ -1304,6 +1445,10 @@ if __name__ == "__main__":
                     (results["METER_SWEEP"], "meter rows named before going live get masked, and restored after"),
                     (results["LEARNED_GUARD"], "any frame that showed a name hides it while it's secret (other addons' raid frames)"),
                     (results["EUI_RAID_NAMES"], "EllesmereUI raid frames: a secret name slot is hidden from its first text, health stays " + str(results["EUI_RAID_DBG"])),
+                    (results["LFG_SECRET_OK"], "a group finder listing with a secret member count reads without an error (Mythic+ key)"),
+                    (results["EUI_INTERRUPT_OK"], "EllesmereUI nameplate kick: a secret interrupter reads only 'Interrupted', a readable one its alias " + str(results["EUI_INTERRUPT_DBG"])),
+                    (results["MINIMAP_OK"], "Shield hides the minimap as a frame (its blips too), shows it after only if it was shown " + str(results["MINIMAP_DBG"])),
+                    (results["CAMERA_ZOOM_OK"], "zoom speed is yours: kept across presets, on with the camera off, gone after Back to game defaults; another setting turns the camera on " + str(results["CAMERA_ZOOM_DBG"])),
                     (results["METER_ALIAS_OK"], "meter rows in combat: your row and remembered players read as their alias"),
                     (results["OVERHEAD_OK"], "names above heads: name-only plates while live, off in instances, your settings back after"),
                     (results["BLANK_PAGE_OK"], "blank name font: the Hide page says where it stands; switching it in a session sets nothing"),
