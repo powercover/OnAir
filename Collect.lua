@@ -18,13 +18,23 @@ local Pause = Utils.Pause
 -- not wait out the gap.
 local lastRun, queued = {}, {}
 
+-- A table the game keeps secret can't be read at all, not even counted (in combat it can hide a
+-- whole list: a community's members). It comes back as nothing, as if the list were empty: it's
+-- read again the next time the game says it changed.
+local function Plain(v)
+    if Utils.IsSecret(v) and type(v) == "table" then
+        return nil
+    end
+    return v
+end
+
 local function Call(fn, ...)
     if type(fn) ~= "function" then
         return nil
     end
     local ok, a, b, c, d = pcall(fn, ...)
     if ok then
-        return a, b, c, d
+        return Plain(a), Plain(b), Plain(c), Plain(d)
     end
     return nil
 end

@@ -784,6 +784,19 @@ do
   OA.EndLive()
   C_LFGList.GetSearchResultInfo = info
 end
+-- a community list the game keeps secret (in combat it hides a community's members): read as
+-- nothing, with no error and nobody read from it (in the game, reading one at all is an error)
+do
+  local subscribed, members, info = C_Club.GetSubscribedClubs, C_Club.GetClubMembers, C_Club.GetMemberInfo
+  local asked, guarded = 0, #GUARDED
+  C_Club.GetMemberInfo = function(...) asked = asked + 1; return info(...) end
+  C_Club.GetClubMembers = function() return { __secret = true, 101, 102 } end
+  OA.Collect.ClubMembers(7)
+  C_Club.GetSubscribedClubs = function() return { __secret = true, { clubId = 7, name = "Night Owls", clubType = 1 } } end
+  OA.Collect.Clubs()
+  CLUB_SECRET_OK = asked == 0 and #GUARDED == guarded
+  C_Club.GetSubscribedClubs, C_Club.GetClubMembers, C_Club.GetMemberInfo = subscribed, members, info
+end
 
 -- EllesmereUI's nameplate after a kick: "Interrupted (Name)" with a secret name reads only
 -- "Interrupted"; with a readable name it gets the alias; a secret spell name on the same label
@@ -1041,6 +1054,44 @@ OA.EndLive()
 stuck.GetText = nil
 METER_ALIAS_OK = METER_ALIAS_OK and issecretvalue(stuck._text)
 GetSpecialization, GetSpecializationInfo = nil, nil
+
+-- EllesmereUI's meter lists its own rows (each window's pool and your pinned row): a row's name is
+-- known from that list whatever its layout (in the game its rows on screen weren't recognized by
+-- layout and showed real names in combat), and the row's data says who it is: you, or a player
+-- whose class + spec was seen with their name. Its rank and amount stay as they are.
+do
+  local win = CreateFrame("Frame", "EllesmereUIDMFrame6", UIParent)
+  local function Bar(src)
+    local row = CreateFrame("Button", nil, win)
+    local fill = CreateFrame("StatusBar", nil, row)
+    local tf = CreateFrame("Frame", nil, fill)
+    -- made in an order the layout check can't read: the name isn't right of the rank
+    local amount, label, pos = tf:CreateFontString(), tf:CreateFontString(), tf:CreateFontString()
+    return { row = row, fill = fill, label = label, pos = pos, amount = amount, _src = src }
+  end
+  local mine = Bar({ isLocalPlayer = true, classFilename = "WARLOCK", specIconID = 136145 })
+  local tom = Bar({ isLocalPlayer = false, classFilename = "MAGE", specIconID = 135932 })
+  local pinned = Bar({ isLocalPlayer = true, classFilename = "WARLOCK", specIconID = 136145 })
+  EllesmereUI = { _ModuleNS = { EllesmereUIDamageMeters = { _windows = { { rowPool = { mine, tom }, stickyPlayer = pinned } } } } }
+  OA.Names.AddFull("Tomlin-Kazzak", "crew")
+  OA.GoLive(); run(0.05)
+  -- out of combat: a readable name is masked, and its class + spec remembered
+  tom.pos:SetText("2.")
+  tom.label:SetText("Tomlin"); run(0.05)
+  local tomAlias = tom.label:GetText()
+  -- in combat: every name secret
+  for _, bar in ipairs({ mine, tom, pinned }) do bar.label:SetText({ __secret = true }) end
+  tom.amount:SetText({ __secret = true })
+  run(0.05)
+  local masked = tomAlias ~= "Tomlin" and not tomAlias:find("Tomlin") and tom.label:GetText() == tomAlias
+  local yours = mine.label:GetText() == OA.Names.MeAlias() and pinned.label:GetText() == OA.Names.MeAlias()
+  local untouched = issecretvalue(tom.amount:GetText()) and tom.pos:GetText() == "2."
+  OA.EndLive()
+  EllesmereUI = nil
+  EUI_METER_LIST_OK = masked and yours and untouched
+  EUI_METER_LIST_DBG = string.format("masked=%s yours=%s untouched=%s tom=%s mine=%s", tostring(masked), tostring(yours),
+    tostring(untouched), tostring(tomAlias), tostring(mine.label:GetText()))
+end
 
 -- performance: big lists are read at most every few seconds, the guild's own community isn't
 -- read as a community, a burst of nameplates looks at each plate once, and a chat line shown in
@@ -1304,7 +1355,7 @@ def run(toc, look="viewfinder"):
                               "SNAP_FREE", "DONE_OK", "SNAP_RIGHT_CENTER", "SNAP_PIECE",
                               "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS",
                               "SNAP_MODES", "LIVE_DRAG", "FIRST_EDIT", "PANELS_OPENED",
-                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "EUI_RAID_NAMES", "EUI_RAID_DBG", "LFG_SECRET_OK", "EUI_INTERRUPT_OK", "EUI_INTERRUPT_DBG", "MINIMAP_OK", "MINIMAP_DBG", "CAMERA_ZOOM_OK", "CAMERA_ZOOM_DBG", "CHAPTER_NOTE_OK", "CHAPTER_NOTE_DBG", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "METER_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
+                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "EUI_RAID_NAMES", "EUI_RAID_DBG", "LFG_SECRET_OK", "EUI_INTERRUPT_OK", "EUI_INTERRUPT_DBG", "MINIMAP_OK", "MINIMAP_DBG", "CAMERA_ZOOM_OK", "CAMERA_ZOOM_DBG", "CHAPTER_NOTE_OK", "CHAPTER_NOTE_DBG", "EUI_METER_LIST_OK", "EUI_METER_LIST_DBG", "CLUB_SECRET_OK", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "METER_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
 
 
 # One login (or /reload) with the blank name font: what the game's name fonts hold after OnAir's
@@ -1446,10 +1497,12 @@ if __name__ == "__main__":
                     (results["LEARNED_GUARD"], "any frame that showed a name hides it while it's secret (other addons' raid frames)"),
                     (results["EUI_RAID_NAMES"], "EllesmereUI raid frames: a secret name slot is hidden from its first text, health stays " + str(results["EUI_RAID_DBG"])),
                     (results["LFG_SECRET_OK"], "a group finder listing with a secret member count reads without an error (Mythic+ key)"),
+                    (results["CLUB_SECRET_OK"], "a community list the game keeps secret (combat) reads as nothing, without an error"),
                     (results["EUI_INTERRUPT_OK"], "EllesmereUI nameplate kick: a secret interrupter reads only 'Interrupted', a readable one its alias " + str(results["EUI_INTERRUPT_DBG"])),
                     (results["MINIMAP_OK"], "Shield hides the minimap as a frame (its blips too), shows it after only if it was shown " + str(results["MINIMAP_DBG"])),
                     (results["CAMERA_ZOOM_OK"], "zoom speed is yours: kept across presets, on with the camera off, gone after Back to game defaults; another setting turns the camera on " + str(results["CAMERA_ZOOM_DBG"])),
                     (results["METER_ALIAS_OK"], "meter rows in combat: your row and remembered players read as their alias"),
+                    (results["EUI_METER_LIST_OK"], "EllesmereUI meter rows from its own row list: names masked in combat whatever the layout, your row and a remembered player as their alias " + str(results["EUI_METER_LIST_DBG"])),
                     (results["OVERHEAD_OK"], "names above heads: name-only plates while live, off in instances, your settings back after"),
                     (results["BLANK_PAGE_OK"], "blank name font: the Hide page says where it stands; switching it in a session sets nothing"),
                     (results["STREAM_LEFT"], "stream chat lines start on the left (after its font is applied)"),

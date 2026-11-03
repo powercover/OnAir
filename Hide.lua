@@ -365,8 +365,9 @@ end
 ---------------------------------------------------------------------------------------------- meters
 
 -- In combat a damage meter's names are secret, so its name labels are found by where they sit:
---  EllesmereUI: EllesmereUIDMFrameN > row > fill > text frame, where a player row's label is
---   anchored to the rank text on its left (spell rows have no rank).
+--  EllesmereUI: its own list of rows (below); without it, EllesmereUIDMFrameN > row > fill > text
+--   frame, where a player row's label is anchored to the rank text on its left (spell rows have
+--   no rank).
 --  Blizzard: an ancestor named DamageMeter*, the FontString kept under a "name"-like key.
 local meterKind = setmetatable({}, { __mode = "k" })
 
@@ -392,13 +393,71 @@ local function MeterOf(frame)
     return nil
 end
 
+-- EllesmereUI's meter keeps a list of its own rows (each window's row pool and the pinned row of
+-- your own): each row's name label, rank and amount, and the data the row shows (row._src). Read
+-- from there, a name label is known whatever the layout, and so is who its row is. label -> its
+-- row; a row's rank or amount -> false. A text it doesn't know yet looks the list up again, at most
+-- once a frame (windows can be added).
+local euiRows = setmetatable({}, { __mode = "k" })
+local euiMappedAt
+
+local function AddEuiRow(row)
+    local label = type(row) == "table" and rawget(row, "label")
+    if type(label) ~= "table" then
+        return
+    end
+    euiRows[label] = row
+    for _, key in ipairs({ "pos", "amount" }) do
+        local other = rawget(row, key)
+        if type(other) == "table" then
+            euiRows[other] = false
+        end
+    end
+end
+
+local function EuiRow(fs)
+    local row = euiRows[fs]
+    if row == nil and euiMappedAt ~= GetTime() then
+        euiMappedAt = GetTime()
+        local modules = _G.EllesmereUI and _G.EllesmereUI._ModuleNS
+        local dm = type(modules) == "table" and modules.EllesmereUIDamageMeters
+        local windows = type(dm) == "table" and rawget(dm, "_windows")
+        if type(windows) == "table" then
+            for _, window in pairs(windows) do
+                if type(window) == "table" then
+                    local pool = rawget(window, "rowPool")
+                    if type(pool) == "table" then
+                        for _, r in ipairs(pool) do
+                            AddEuiRow(r)
+                        end
+                    end
+                    AddEuiRow(rawget(window, "stickyPlayer"))
+                end
+            end
+        end
+        row = euiRows[fs]
+    end
+    return row
+end
+
 local function Classify(fs)
+    local row = EuiRow(fs)
+    if row ~= nil then
+        return row and "eui" or false
+    end
     local holder = fs:GetParent()
     if not holder then
         return false
     end
     local meter = MeterOf(holder)
     if meter == "eui" then
+        -- In one of its windows but not in its list yet (a window just added): once more, now.
+        euiMappedAt = nil
+        row = EuiRow(fs)
+        if row ~= nil then
+            return row and "eui" or false
+        end
+        -- (An EllesmereUI without its row list: the name is the second text, right of the rank.)
         local first, second = holder:GetRegions()
         if second ~= fs or not (first and first.GetObjectType and first:GetObjectType() == "FontString") then
             return false
@@ -594,7 +653,11 @@ end
 
 local function RowSourceOf(fs)
     if meterKind[fs] == "eui" then
-        return nil
+        -- EllesmereUI's, through its row list (it attaches the data after the label: a frame later
+        -- it's this redraw's). Without the list, none: the row's icons tell the rows apart.
+        local row = euiRows[fs]
+        local src = row and rawget(row, "_src")
+        return type(src) == "table" and src or nil
     end
     return RowSource(fs)
 end
@@ -607,9 +670,9 @@ local function SpecKey(src)
     return class .. ":" .. tostring(spec)
 end
 
--- EllesmereUI keeps a row's data in a plain table the label can't reach. Its row icon (spec or
--- class) and bar color are never secret, so they tell the rows apart: label -> text frame ->
--- bar, whose textures are the icon (and maybe a track).
+-- Without its row list (an older EllesmereUI), a row's data is a plain table the label can't
+-- reach. Its row icon (spec or class) and bar color are never secret, so they tell the rows apart:
+-- label -> text frame -> bar, whose textures are the icon (and maybe a track).
 -- (A meter redraws its rows many times a second in a fight: what's found per row is kept, and the
 -- key is worked out again only when the row's icon changes.)
 local rowTextures = setmetatable({}, WEAK)
@@ -741,6 +804,11 @@ local function RowKey(fs)
     local src = RowSourceOf(fs)
     if src then
         return SpecKey(src)
+    end
+    -- A row from EllesmereUI's list before its data is attached: no key from its icons instead
+    -- (keys from data and from icons never match each other).
+    if euiRows[fs] then
+        return nil
     end
     local ok, key = pcall(IconKey, fs)
     return ok and key or nil
@@ -1653,10 +1721,14 @@ function Hide.Explain(obj)
     for reason in pairs(reasons[obj] or {}) do
         parts[#parts + 1] = "muted:" .. reason
     end
+    -- In EllesmereUI's meter row list: a row's name, or its rank or amount.
+    if euiRows[obj] ~= nil then
+        parts[#parts + 1] = "list=" .. (euiRows[obj] and "name" or "other")
+    end
     if meterKind[obj] then
         parts[#parts + 1] = "meter=" .. tostring(meterKind[obj])
         -- What the row's data says (to see why a row isn't recognized).
-        local src = RowSource(obj)
+        local src = RowSourceOf(obj)
         if not src then
             local key = RowKey(obj)
             parts[#parts + 1] = "icon=" .. (key and "yes" or "none")

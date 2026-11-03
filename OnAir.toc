@@ -2,7 +2,7 @@
 ## Title: |cffffffffOn|r|cffff3b30Air|r
 ## Notes: Streamer & recording mode. Swaps every player name in your UI for an alias you choose: chat, nameplates, frames, meters, friends, guild, group finder.
 ## Author: powercover
-## Version: 1.0.1
+## Version: 1.0.2
 ## X-License: All Rights Reserved
 ## X-Curse-Project-ID: 1776602
 ## X-Wago-ID: qGYB4vNg

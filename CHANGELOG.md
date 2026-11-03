@@ -1,5 +1,13 @@
 # OnAir
 
+## 1.0.2
+
+- EllesmereUI damage meters (its newest version): the names on screen are masked in combat again.
+  Your own row reads your alias, a player OnAir has seen out of combat reads theirs, and anyone else
+  reads "Crew Member".
+- Fixed a Lua error in combat: the game can hide a whole list from addons (a community's members),
+  and OnAir now reads it again later instead.
+
 ## 1.0.1
 
 - Mythic+ keys: fixed an error from the group finder (in a key, the game hides some numbers from
