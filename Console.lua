@@ -509,6 +509,8 @@ local function BuildHide()
     Group({
         { "Chat", L["Chat"], L["Senders, names in messages, whispers."], "chat" },
         { "Trash", L["Clear chat on go live"], L["Wipes old lines with real names."], "clearChat" },
+        { "Guild", L["Guild window messages"], L["Hidden while live. Names have their own switches."], "guildChat" },
+        { "Guild", L["Guild message of the day"], L["Hidden while live, in the guild window and chat."], "guildMotd" },
         { "Nameplate", L["Nameplates & overhead"], L["Plates and names above heads."], "nameplates", CVars },
         { "Tooltip", L["Tooltips"], L["Unit tooltips, guild lines, lists."], "tooltips" },
         { "Meter", L["Damage meters"], L["Blizzard's and EllesmereUI's, also in combat."], "meters" },
@@ -924,6 +926,7 @@ local function BuildCustom()
             OA.NamesChanged(false)
         end
     end })
+    P.Note(L["Type a character name, Name-Realm, or a Battle.net friend's BattleTag (Name#1234). It works even if their group is off under Whose names, so you can hide one person and nobody else. Real names can't be typed: the game never shows them to addons, so use the BattleTag. Aliases show while you're live or in Preview."])
     P.Toggle({ icon = "Hide", title = L["Reveal real names"], help = L["Shows the real names in the list below. Off the air only, ideally."],
         get = function() return reveal end,
         set = function(v)

@@ -61,7 +61,7 @@ local function Visible(text)
 end
 
 local function LeaksIn(text, aliasWords, phrases)
-    text = Visible(text)
+    text = Names.WithoutKept(Visible(text))
     local found = {}
     for word in text:gmatch("[^%s,%.:;!%?%(%)%[%]\"|<>/]+") do
         if Names.IsRealWord(word) and not aliasWords[word] then
@@ -72,6 +72,10 @@ local function LeaksIn(text, aliasWords, phrases)
         if text:find(phrase, 1, true) then
             found[#found + 1] = phrase
         end
+    end
+    local half = Names.HalfName(text)
+    if half then
+        found[#found + 1] = half
     end
     return found
 end
@@ -112,8 +116,9 @@ local function MeterRows()
     return lines
 end
 
-local function ScanLeaks(report, secrets)
+local function ScanLeaks(report, secrets, motdLeft)
     local aliasWords, phrases = Names.AliasWords(), Names.Phrases()
+    local motd = OA.db.where.guildMotd ~= false and OA.Hide.GuildMotd()
     -- The UI, and the world frame too: nameplates hang off it, not the UI.
     local stack, seen, count = { UIParent, WorldFrame }, {}, 0
     while #stack > 0 do
@@ -138,6 +143,9 @@ local function ScanLeaks(report, secrets)
                             end
                         end
                         if type(text) == "string" and not IsSecret(text) and text ~= "" then
+                            if motd and #motdLeft < MAX_LINES and Names.HideMotdText(text, motd) ~= text then
+                                motdLeft[#motdLeft + 1] = string.format(L["  still in a label: %s"], Where(region))
+                            end
                             local found = LeaksIn(text, aliasWords, phrases)
                             if #found > 0 then
                                 count = count + 1
@@ -392,12 +400,17 @@ function Check.Run()
     local leaks = 0
     if OA.live then
         report[#report + 1] = L["Real names still on screen (or in closed windows):"]
-        local secrets = {}
-        leaks = ScanLeaks(report, secrets)
+        local secrets, motdLeft = {}, {}
+        leaks = ScanLeaks(report, secrets, motdLeft)
         if leaks == 0 then
             report[#report + 1] = L["  none"]
         elseif leaks > MAX_LINES then
             report[#report + 1] = string.format(L["  ... and %d more"], leaks - MAX_LINES)
+        end
+        report[#report + 1] = ""
+        report[#report + 1] = string.format(L["Guild message of the day: %s"], OA.Hide.MotdState())
+        for _, line in ipairs(motdLeft) do
+            report[#report + 1] = line
         end
         -- EllesmereUI nameplates: what OnAir thinks of each cast target label (also between casts).
         local ns = _G.EllesmereNameplates_NS

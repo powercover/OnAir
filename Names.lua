@@ -10,6 +10,7 @@ local _, OA = ...
 --   friend Battle.net friends     -> Everyone else settings, keyed by account
 --   pet    pets and minions with a name of their own -> "{owner}'s Pet"
 -- Guild names and BattleTags are phrases: replaced as whole strings.
+-- A fixed alias (Custom page) goes for whoever it names, whatever the "Whose names" switches say.
 OA.Names = {}
 
 local Names = OA.Names
@@ -18,7 +19,9 @@ local L = OA.L
 local IsSecret, IsPlain = Utils.IsSecret, Utils.IsPlainString
 
 local RANK = { me = 4, crew = 3, friend = 2, pet = 2, other = 1 }
-local WHO = { me = "me", crew = "crew", other = "others", friend = "friends", pet = "pets" }
+-- A name on the Custom page: above everyone, whoever it turns out to be.
+local FIXED_RANK = 5
+local WHO ={ me = "me", crew = "crew", other = "others", friend = "friends", pet = "pets" }
 
 local people = {}       -- key -> person
 local peopleCount = 0
@@ -33,6 +36,7 @@ local realOf = {}       -- alias -> who it stands for ("Name-Realm", or a Battle
 local cache, cacheSize = {}, 0
 local cacheStale = false
 local customLower = {}
+local surnames = {}     -- Forever: a surname seen on someone -> their alias
 
 local function DB()
     return OA.db
@@ -235,9 +239,21 @@ local function Generate(person)
     return FromCast(person.key)
 end
 
+-- How a name on the Custom page is looked up: small letters, and a realm without its spaces, dashes
+-- and apostrophes however it was typed ("Bob-Twisting Nether" is the game's "Bob-TwistingNether").
+local function FixedKey(name)
+    local first, realm = name:match("^([^%-]+)%-(.+)$")
+    if first and not Utils.IS_FOREVER then
+        return (first .. "-" .. realm:gsub("[%s'%-]", "")):lower()
+    end
+    return name:lower()
+end
+
 local function CustomFor(person)
-    local key = person.key:lower()
-    return customLower[key] or customLower[person.first:lower()]
+    if not next(customLower) then
+        return nil
+    end
+    return customLower[FixedKey(person.key)] or customLower[person.first:lower()]
 end
 
 -- What the character you play now is called: its fixed alias (Custom page) if it has one, else your
@@ -247,7 +263,7 @@ function Names.MyAlias()
     local ok, first, second = pcall(UnitName, "player")
     if ok and IsPlain(first) then
         local key = MakeKey(first, IsPlain(second) and second or nil)
-        local custom = customLower[key:lower()] or customLower[first:lower()]
+        local custom = customLower[FixedKey(key)] or customLower[first:lower()]
         if custom then
             return custom
         end
@@ -324,7 +340,10 @@ local function PutWord(word, alias, rank)
 end
 
 local function Publish(person)
-    if not WhoEnabled(person.kind) then
+    -- Their group is off and nothing fixes an alias for them: they read as themselves (also a sender
+    -- in chat, who'd keep the alias from before the switch went off).
+    if not WhoEnabled(person.kind) and not person.fixed and not CustomFor(person) then
+        person.alias = nil
         return false
     end
     local alias = AliasFor(person)
@@ -343,6 +362,12 @@ local function Publish(person)
         -- Retail names in text can carry the realm with or without its spaces.
         changed = PutWord(person.first .. "-" .. person.realmOnly, alias, rank) or changed
     end
+    if Utils.IS_FOREVER and person.kind ~= "pet" then
+        local surname = person.key:sub(#person.first + #SEP + 1)
+        if surname ~= "" then
+            surnames[surname] = alias
+        end
+    end
     return changed
 end
 
@@ -357,6 +382,12 @@ function Names.Add(first, second, kind, info)
     if Utils.IS_FOREVER and not second then
         local f, s = SplitFull(first)
         first, second = f, s
+    elseif Utils.IS_FOREVER and IsPlain(second) then
+        -- Some units carry the surname in the first value too: ("Anna Smith", "Smith").
+        local tail = SEP .. second
+        if first:sub(-#tail) == tail then
+            first = first:sub(1, -#tail - 1)
+        end
     end
     if second and not Utils.IS_FOREVER then
         Names.AddRealm(second)
@@ -382,6 +413,7 @@ function Names.Add(first, second, kind, info)
         person.role = info.role or person.role
         person.owner = info.owner or person.owner
         person.forced = info.forced or person.forced
+        person.fixed = info.fixed or person.fixed
     end
     if Publish(person) then
         Changed()
@@ -489,7 +521,10 @@ end
 function Names.Phrases()
     local list = {}
     for _, phrase in ipairs(phrases) do
-        list[#list + 1] = phrase.text
+        -- A name kept on purpose (see KeepWhole) is no leak.
+        if phrase.alias ~= phrase.text then
+            list[#list + 1] = phrase.text
+        end
     end
     return list
 end
@@ -734,9 +769,22 @@ local function AddPhrase(text, alias, wholeOnly)
     Changed()
 end
 
+-- A guild or community with its switch off stays as it is: a word in its name can be someone's name
+-- ("Ten Past Zed"), and their alias doesn't belong in there. One word alone goes the usual way: it
+-- could just as well be that person, and a real name must not show because of it.
+local function KeepWhole(name)
+    if name:find("%s") then
+        AddPhrase(name, name)
+    end
+end
+
 -- Guild names: yours gets your guild alias, others a numbered one.
 function Names.AddGuild(name, mine)
-    if not IsPlain(name) or not WhoEnabled("guilds") then
+    if not IsPlain(name) then
+        return
+    end
+    if not WhoEnabled("guilds") then
+        KeepWhole(name)
         return
     end
     local db = DB()
@@ -758,44 +806,100 @@ function Names.AddGuild(name, mine)
     AddPhrase(name, alias, not mine)
 end
 
--- A Battle.net friend: the account's name token, its BattleTag and the character it plays all
--- read as one alias.
-function Names.AddBNet(accountID, token, battleTag, characterFull)
-    if not WhoEnabled("friends") then
+-- Battle.net friends, by account. What's known of each is kept, also while their switch is off: a
+-- settings change works them out again from here (the game's lists are read only when the game
+-- says they changed).
+local friends = {}
+
+-- A friend's fixed alias (Custom page): typed as their BattleTag, with or without its "#1234", or
+-- as a character they were seen on.
+local function FixedForFriend(person)
+    if not next(customLower) then
         return nil
     end
-    local key = "bn:" .. tostring(accountID or token or battleTag)
-    local person = people[key]
-    if not person then
-        person = { key = key, first = key, kind = "friend" }
-        people[key] = person
-        peopleCount = peopleCount + 1
-        person.alias = AliasFor(person)
-        used[person.alias] = true
-        AddAliasStart(person.alias)
+    if person.battleTag then
+        local tag = person.battleTag:lower()
+        local fixed = customLower[tag] or customLower[tag:match("^(.-)#%d+$") or tag]
+        if fixed then
+            return fixed
+        end
     end
-    if type(token) == "string" and not IsSecret(token) then
-        -- Whispers to the alias go to this account (Chat.lua swaps the target back).
-        realOf[person.alias] = token
-        if tokens[token] ~= person.alias then
-            tokens[token] = person.alias
+    for full in pairs(person.chars) do
+        local fixed = customLower[FixedKey(full)] or customLower[(SplitFull(full)):lower()]
+        if fixed then
+            return fixed
+        end
+    end
+    return nil
+end
+
+-- A friend's character reads as their account. One OnAir knows as more than a friend (in your
+-- group) keeps its own alias, unless the friend's alias is fixed.
+local function ForceCharacter(full, alias, fixed)
+    local person = Names.AddFull(full, "friend", { forced = alias, fixed = fixed })
+    if person and (fixed or person.kind == "friend") and (person.forced ~= alias or person.fixed ~= fixed) then
+        person.forced, person.fixed = alias, fixed
+        if Publish(person) then
             Changed()
         end
     end
-    if IsPlain(battleTag) then
-        AddPhrase(battleTag, person.alias)
+end
+
+-- The account's name token, its BattleTag and every character it was seen on all read as one alias.
+local function PublishFriend(person)
+    local fixed = FixedForFriend(person)
+    if not fixed and not WhoEnabled("friends") then
+        person.alias = nil
+        return nil
+    end
+    if not people[person.key] then
+        people[person.key] = person
+        peopleCount = peopleCount + 1
+    end
+    local alias = fixed or AliasFor(person)
+    person.alias = alias
+    used[alias] = true
+    AddAliasStart(alias)
+    if person.token then
+        -- Whispers to the alias go to this account (Chat.lua swaps the target back).
+        realOf[alias] = person.token
+        if tokens[person.token] ~= alias then
+            tokens[person.token] = alias
+            Changed()
+        end
+    end
+    if person.battleTag then
+        AddPhrase(person.battleTag, alias)
         -- The name without "#1234" too, as a whole word: EllesmereUI's friends tooltip and others
         -- show the BattleTag cut short ("DarkStriker (Character)").
-        local short = battleTag:match("^(.-)#%d+$")
-        if short and PutWord(short, person.alias, RANK.friend) then
-            AddAliasStart(person.alias)
+        local short = person.battleTag:match("^(.-)#%d+$")
+        if short and PutWord(short, alias, fixed and FIXED_RANK or RANK.friend) then
             Changed()
         end
     end
-    if IsPlain(characterFull) then
-        Names.AddFull(characterFull, "friend", { forced = person.alias })
+    for full in pairs(person.chars) do
+        ForceCharacter(full, alias, fixed and true or nil)
     end
-    return person.alias
+    return alias
+end
+
+function Names.AddBNet(accountID, token, battleTag, characterFull)
+    local key = "bn:" .. tostring(accountID or token or battleTag)
+    local person = friends[key]
+    if not person then
+        person = { key = key, first = key, kind = "friend", chars = {} }
+        friends[key] = person
+    end
+    if type(token) == "string" and not IsSecret(token) then
+        person.token = token
+    end
+    if IsPlain(battleTag) then
+        person.battleTag = battleTag
+    end
+    if IsPlain(characterFull) then
+        person.chars[characterFull] = true
+    end
+    return PublishFriend(person)
 end
 
 -- Your own BattleTag. The friends window draws it as the name plus a colored "#1234", so the
@@ -868,7 +972,11 @@ end
 
 -- Community names: like guild names, numbered.
 function Names.AddCommunity(name)
-    if not IsPlain(name) or not WhoEnabled("guilds") then
+    if not IsPlain(name) then
+        return
+    end
+    if not WhoEnabled("guilds") then
+        KeepWhole(name)
         return
     end
     local db = DB()
@@ -926,6 +1034,16 @@ local function ReplacePhrases(s, held)
         s = ReplaceOne(s, otherPhrases[i], held)
     end
     return s
+end
+
+-- For /onair check: text without the names kept on purpose (a player's name inside one is no leak).
+function Names.WithoutKept(text)
+    for _, phrase in ipairs(phrases) do
+        if phrase.alias == phrase.text then
+            text = ReplaceOne(text, phrase, {})
+        end
+    end
+    return text
 end
 
 local function SkipEscape(s, a, len)
@@ -1066,6 +1184,10 @@ local function ScrubRaw(s)
                         alias = words[s:sub(a, se)]
                         if alias then
                             stop = se
+                        elseif words[word] and surnames[s:sub(e + 2, se)] then
+                            -- A first name and a surname OnAir knows, on different people: both are
+                            -- shared by many, so this is one more, and the surname goes too.
+                            alias, stop = words[word], se
                         end
                     end
                 end
@@ -1152,6 +1274,52 @@ local function Shortened(s)
     end))
 end
 
+-- Forever: a label that holds only a player's name, in forms the words alone can't catch:
+--   "Anna Quill", "Anna Qui"  a first name OnAir knows, with a surname it doesn't, or cut short:
+--                             without this it would read "Alias Quill"
+--   "A. Smith"                an initial and a surname OnAir has seen (EllesmereUI's Abbreviated)
+-- A surname alone ("Smith", EllesmereUI's Last Name) or a stranger with a known surname ("Zed Smith")
+-- is left alone on purpose: surnames are everyday words too. A label reading "Frost" or "Frost Mage"
+-- is a spec, and learning that as a player would make "Frost" read as an alias in every spell.
+local function ForeverLabel(text)
+    if not Utils.IS_FOREVER or #text > 80 then
+        return nil
+    end
+    local core = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    core = core:match("^%s*(.-)%s*$")
+    if used[core] or words[core] or phraseByText[core] then
+        return nil
+    end
+    local first = core:match("^([%a\128-\255]+) [%a\128-\255]+$")
+    local alias = first and words[first] or surnames[core:match("^[%a\128-\255]+%. ([%a\128-\255]+)$") or ""]
+    if not alias then
+        return nil
+    end
+    local a, b = text:find(core, 1, true)
+    return a and (text:sub(1, a - 1) .. alias .. text:sub(b + 1)) or nil
+end
+
+-- For /onair check on Forever: half of a name on screen, which the words can't show: an alias and
+-- one more word ("Stand-In Smith"), or a surname OnAir knows on its own.
+function Names.HalfName(text)
+    if not Utils.IS_FOREVER then
+        return nil
+    end
+    local core = text:match("^%s*(.-)%s*$")
+    if surnames[core] then
+        return core
+    end
+    for _, alias in ipairs(aliasStarts[core:match("^[%a\128-\255]+") or ""] or EMPTY) do
+        if core:sub(1, #alias) == alias then
+            local rest = core:sub(#alias + 1):match("^ ([%a\128-\255]+)$")
+            if rest then
+                return rest
+            end
+        end
+    end
+    return nil
+end
+
 function Names.Scrub(text)
     if type(text) ~= "string" or IsSecret(text) or text == "" then
         return text
@@ -1175,7 +1343,7 @@ function Names.Scrub(text)
         cacheSize = 0
         cacheStale = false
     end
-    local out = WholeName(text) or ScrubRaw(text)
+    local out = WholeName(text) or ForeverLabel(text) or ScrubRaw(text)
     if out:find(ELLIPSIS, 1, true) then
         out = Shortened(out)
     end
@@ -1188,13 +1356,125 @@ function Names.Scrub(text)
     return out
 end
 
+-- A line of the Guild & Communities window's chat: "[Sender]: message". The game gives the message
+-- as a protected token: it can't be read, so no name in it can be swapped. Whether it shows has a
+-- switch of its own, apart from the names in the line (`names`: "Interface text" is on). Other
+-- tokens go as everywhere (see TokenAlias).
+function Names.ScrubClubLine(text, hide, names)
+    local a, b
+    local from = 1
+    while true do
+        local s, e = text:find("|K.-|k", from)
+        if not s then
+            break
+        end
+        a, b, from = s, e, e + 1
+    end
+    -- The message is the last token, right after the ": " (maybe with a color in between).
+    local head = a and text:sub(1, a - 1)
+    if not head or not (head:find(": $") or head:find(": |c%x%x%x%x%x%x%x%x$")) then
+        return names and Names.Scrub(text) or text
+    end
+    local tail = text:sub(b + 1)
+    if names then
+        head, tail = Names.Scrub(head), Names.Scrub(tail)
+    end
+    return head .. (hide and L["(hidden)"] or text:sub(a, b)) .. tail
+end
+
+-- The lines that give the message of the day, worded as the game words them in each language: the
+-- Guild & Communities window's chat (a community's too), every chat window (maybe after a timestamp),
+-- and the Guild News tab, whose words are short ("MotD: ") so they count only at a label's very start.
+-- Its headings ("Message of the Day") have no message after them.
+local MOTD_LINES = {
+    { "COMMUNITIES_MESSAGE_OF_THE_DAY_FORMAT" },
+    { "GUILD_MOTD_TEMPLATE" },
+    { "GUILD_NEWS_MOTD", atStart = true },
+}
+local motdLines
+
+local function MotdLines()
+    if not motdLines then
+        motdLines = {}
+        for _, spec in ipairs(MOTD_LINES) do
+            local format = _G[spec[1]]
+            local words, after
+            if type(format) == "string" then
+                words, after = format:match("^(.-)%%[%d%$]*s(.*)$")
+            end
+            -- A format that's only a quote and the message says nothing: it would match any quote.
+            if words and #words >= 4 then
+                motdLines[#motdLines + 1] = { words = words, after = after, atStart = spec.atStart }
+            end
+        end
+    end
+    return motdLines
+end
+
+-- Such a line with its message hidden; nil for any other text.
+function Names.HideMotd(text)
+    for _, line in ipairs(MotdLines()) do
+        local a, b = text:find(line.words, 1, true)
+        if a and b < #text and (a == 1 or not line.atStart) then
+            return text:sub(1, b) .. L["(hidden)"] .. line.after
+        end
+    end
+    return nil
+end
+
+-- Text with the guild's message of the day in it (a tooltip's line): that part hidden. A short
+-- message counts only as the whole text: "hi" is in many words.
+function Names.HideMotdText(text, motd)
+    if text == motd then
+        return L["(hidden)"]
+    end
+    if #motd >= 6 then
+        local a, b = text:find(motd, 1, true)
+        if a then
+            return text:sub(1, a - 1) .. L["(hidden)"] .. text:sub(b + 1)
+        end
+    end
+    return text
+end
+
 ---------------------------------------------------------------------------------------------- settings
 
 local function RebuildCustom()
     wipe(customLower)
     for real, alias in pairs(DB().custom) do
         if type(real) == "string" and type(alias) == "string" and alias ~= "" then
-            customLower[Utils.Trim(real):lower()] = alias
+            customLower[FixedKey(Utils.Trim(real))] = alias
+        end
+    end
+end
+
+local function Capitalized(word)
+    return word:sub(1, 1):upper() .. word:sub(2):lower()
+end
+
+-- A fixed alias works from the moment it's added, also for someone OnAir hasn't met yet: the name
+-- on the Custom page goes out right away. Typed in small letters it's still a name (the game writes
+-- a capital); "bob" itself stays a word. A realm isn't needed: "Bob-Anywhere" reads through "Bob".
+local function PublishFixed()
+    for real, alias in pairs(DB().custom) do
+        if type(real) == "string" and type(alias) == "string" and alias ~= "" then
+            local name = Utils.Trim(real)
+            local first, second
+            if name:find("#%d+$") then
+                AddPhrase(name, alias)
+                first = name:match("^(.-)#%d+$")
+            else
+                first, second = SplitFull(name)
+            end
+            used[alias] = true
+            AddAliasStart(alias)
+            PutWord(Capitalized(first), alias, FIXED_RANK)
+            if IndexWord(first) then
+                PutWord(first, alias, FIXED_RANK)
+            end
+            if second and Utils.IS_FOREVER then
+                surnames[Capitalized(second)] = alias
+            end
         end
     end
 end
@@ -1211,6 +1491,7 @@ function Names.Rebuild(reshuffle)
     RebuildCustom()
     wipe(words)
     wipe(wordRank)
+    wipe(surnames)
     wipe(aliasStarts)
     wipe(used)
     wipe(realOf)
@@ -1224,8 +1505,18 @@ function Names.Rebuild(reshuffle)
     for _, alias in pairs(db.assigned) do
         used[alias] = true
     end
+    PublishFixed()
     local list = {}
     for _, person in pairs(people) do
+        -- A fixed alias carried from a friend's account: worked out again below, from the account.
+        if person.fixed then
+            person.forced, person.fixed = nil, nil
+        end
+        if not friends[person.key] then
+            list[#list + 1] = person
+        end
+    end
+    for _, person in pairs(friends) do
         list[#list + 1] = person
     end
     -- Owners before their pets, the group before strangers.
@@ -1236,9 +1527,8 @@ function Names.Rebuild(reshuffle)
         return RANK[a.kind] > RANK[b.kind]
     end)
     for _, person in ipairs(list) do
-        if person.kind == "friend" and person.key:find("^bn:") then
-            person.alias = AliasFor(person)
-            used[person.alias] = true
+        if friends[person.key] then
+            PublishFriend(person)
         else
             Publish(person)
         end
@@ -1271,6 +1561,7 @@ function Names.Init()
     for _, alias in pairs(DB().assigned) do
         used[alias] = true
     end
+    PublishFixed()
 end
 
 -- For the console preview: alias of a made-up player of a kind, without remembering it.

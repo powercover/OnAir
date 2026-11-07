@@ -24,7 +24,7 @@ local DEFAULTS = {
     -- NPC names: "real", "generic" (the labels below) or "hide".
     npc = { mode = "real", enemy = L["Enemy"], friendly = L["NPC"], boss = L["Boss"] },
     who = { me = true, crew = true, others = true, friends = true, guilds = true, pets = true },
-    where = { chat = true, clearChat = true, nameplates = true, tooltips = true, meters = true, interface = true },
+    where = { chat = true, clearChat = true, guildChat = true, guildMotd = true, nameplates = true, tooltips = true, meters = true, interface = true },
     -- No names above heads at all: the game takes a blank name font at login (see Hide.lua).
     blankNames = false,
     custom = {},

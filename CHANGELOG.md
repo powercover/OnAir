@@ -1,5 +1,27 @@
 # OnAir
 
+## 1.0.3
+
+- Custom page: a fixed alias now works with that person's group switched off, so you can hide one
+  person and nobody else. It works from the moment you add it, also before OnAir has met them, and
+  a realm can be typed with or without its spaces.
+- Custom page: you can now type a Battle.net friend's BattleTag, with or without the number. Their
+  real name, BattleTag and characters all read that alias. A fixed alias on a friend's character
+  does the same. The page now says what to type.
+- Privacy fix: changing a name setting while live could show Battle.net friends' BattleTags until
+  the game next reported them. They now stay masked.
+- New switch, "Guild window messages": messages in the Guild & Communities window read "(hidden)",
+  apart from the name switches. On by default.
+- New switch, "Guild message of the day": hidden in the guild window, in every chat window and in
+  the tooltips that show it. A community's message is hidden in its chat too. On by default.
+- "Guild names" off: a guild's or community's name now stays whole. A word in it that's also a
+  player's name no longer turns into that player's alias.
+- A group switched off now brings back real names for its chat senders too.
+- WoW Forever: surnames no longer stay behind. A name reads only its alias, also when the first name
+  and surname come from different people, when the name is cut to fit, and in EllesmereUI's
+  "A. Smith" format. A surname on its own stays, because many are everyday words (Frost, Mage).
+- /onair check: lists half-hidden names on WoW Forever, and says where the message of the day stands.
+
 ## 1.0.2
 
 - EllesmereUI damage meters (its newest version): the names on screen are masked in combat again.

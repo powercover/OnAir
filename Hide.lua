@@ -15,6 +15,7 @@ OA.Hide = {}
 local Hide = OA.Hide
 local Names = OA.Names
 local Utils = OA.Utils
+local L = OA.L
 local IsSecret = Utils.IsSecret
 local SafeBool = Names.SafeBool
 local WORD, IsIndexWord = Names.WORD, Names.IsIndexWord
@@ -1095,6 +1096,16 @@ local function ShowsInterrupter(fs)
     return plate ~= false and rawget(plate, "_interrupted") == true
 end
 
+-- A line of the Guild & Communities window's chat (that window loads when it's first opened). A
+-- message frame keeps its lines in a container of its own.
+local function IsClubChat(fs)
+    local window = _G.CommunitiesFrame
+    local chat = window and window.Chat
+    local lines = chat and chat.MessageFrame
+    lines = lines and (lines.FontStringContainer or lines)
+    return lines ~= nil and fs:GetParent() == lines
+end
+
 local function OnText(obj)
     if busy or not OA.live or exempt[obj] then
         return
@@ -1172,6 +1183,27 @@ local function OnText(obj)
     if guard[obj] then
         Mute(obj, "secret", secret)
     end
+    if type(text) == "string" and not secret then
+        -- The message of the day: a switch of its own, whatever the others say.
+        if Where("guildMotd") then
+            local out = Names.HideMotd(text)
+            if out then
+                if out ~= text then
+                    Rewrite(obj, text, out)
+                end
+                return
+            end
+        end
+        -- The guild window's chat: its messages have a switch of their own (see Names.ScrubClubLine).
+        if text:find("|K", 1, true) and IsClubChat(obj) then
+            local out = Names.ScrubClubLine(text, Where("guildChat"), Where("interface"))
+            if out ~= text then
+                Rewrite(obj, text, out)
+            end
+            Wait(obj, out)
+            return
+        end
+    end
     if not Where("interface") or type(text) ~= "string" or secret or text == "" then
         return
     end
@@ -1200,6 +1232,96 @@ end
 local GuardedText = Utils.Guard("text", OnText)
 Hide.OnText = GuardedText
 
+-- The guild's message of the day as plain text, or nil (none, or the game hides it).
+local function GuildMotd()
+    local get = C_GuildInfo and C_GuildInfo.GetMOTD or _G.GetGuildRosterMOTD
+    if type(get) ~= "function" then
+        return nil
+    end
+    local ok, text = pcall(get)
+    if ok and type(text) == "string" and not IsSecret(text) and text ~= "" then
+        return text
+    end
+    return nil
+end
+Hide.GuildMotd = GuildMotd
+
+-- The message of the day in the Guild Info tab: a SimpleHTML, not a label, so it has a hook of its
+-- own. Its text can't be read back: the real one comes from the game when it's put back.
+local boxChanged = false
+
+local function MotdBox()
+    local info = _G.CommunitiesFrameGuildDetailsFrameInfo
+    local scroll = info and info.MOTDScrollFrame
+    return scroll and scroll.MOTD
+end
+
+-- As the game sets it: `true` shows the text as it is, no markup.
+local function SetBox(box, text)
+    busy = true
+    pcall(box.SetText, box, text, true)
+    busy = false
+end
+
+-- What the box shows in place of the game's text; nil: that text as it is. Hidden, or with the switch
+-- off, names swapped as everywhere else. An empty box stays empty.
+local function BoxShows(text)
+    if Where("guildMotd") then
+        if IsSecret(text) or (type(text) == "string" and text ~= "") then
+            return L["(hidden)"]
+        end
+    elseif Where("interface") and type(text) == "string" and not IsSecret(text) then
+        local out = Names.Scrub(text)
+        if out ~= text then
+            return out
+        end
+    end
+    return nil
+end
+
+local function OnBoxText(box, text)
+    if busy or box ~= MotdBox() then
+        return
+    end
+    local out = BoxShows(text)
+    if out then
+        SetBox(box, out)
+    end
+    boxChanged = out ~= nil
+end
+
+-- Going live, the broadcast ending, a setting changing: the box as it should be now.
+local function UpdateMotdBox()
+    local box = MotdBox()
+    if not box then
+        return
+    end
+    local real = GuildMotd()
+    local out = BoxShows(real)
+    if out then
+        SetBox(box, out)
+        boxChanged = true
+    elseif boxChanged then
+        boxChanged = false
+        SetBox(box, real or "")
+    end
+end
+local GuardedMotdBox = Utils.Guard("guild message", UpdateMotdBox)
+
+-- For /onair check.
+function Hide.MotdState()
+    if not Where("guildMotd") then
+        return L["switch off"]
+    end
+    if not GuildMotd() then
+        return L["none set"]
+    end
+    if not MotdBox() then
+        return L["Guild Info tab not opened yet"]
+    end
+    return boxChanged and L["hidden in the Guild Info tab"] or L["SHOWING in the Guild Info tab"]
+end
+
 local textHooked = false
 
 local function HookText()
@@ -1213,7 +1335,11 @@ local function HookText()
     local buttonMeta = getmetatable(CreateFrame("Button")).__index
     hooksecurefunc(buttonMeta, "SetText", GuardedText)
     hooksecurefunc(buttonMeta, "SetFormattedText", GuardedText)
-
+    -- Protected: a game without this kind of frame can't stop the rest of going live.
+    local ok, html = pcall(CreateFrame, "SimpleHTML")
+    if ok and html then
+        hooksecurefunc(getmetatable(html).__index, "SetText", Utils.Guard("guild message", OnBoxText))
+    end
 end
 
 -- A new name came in: what's on screen may hold it already. Runs once per frame at most.
@@ -1261,7 +1387,13 @@ local function IsPlayer(unit)
 end
 
 local function ScrubTooltip(tooltip)
-    if not Where("tooltips") or not tooltip or not Usable(tooltip) then
+    if not OA.live or not tooltip or not Usable(tooltip) then
+        return
+    end
+    -- The message of the day has a switch of its own (two of the guild window's tooltips show it).
+    local names = Where("tooltips")
+    local motd = Where("guildMotd") and GuildMotd()
+    if not names and not motd then
         return
     end
     -- Every line it holds: also the unnamed tooltips some addons make (Premade Groups Filter).
@@ -1269,7 +1401,10 @@ local function ScrubTooltip(tooltip)
         if fs.GetObjectType and fs:GetObjectType() == "FontString" then
             local text = fs:GetText()
             if type(text) == "string" and not IsSecret(text) and text ~= "" then
-                local out = Names.Scrub(text)
+                local out = motd and Names.HideMotdText(text, motd) or text
+                if names then
+                    out = Names.Scrub(out)
+                end
                 if out ~= text then
                     SetQuiet(fs, out)
                 end
@@ -1630,6 +1765,7 @@ end
 -- A name or a setting changed while live: the old text back, then masked again.
 function Hide.Redo()
     PutBack()
+    GuardedMotdBox()
     if OA.live then
         Hide.Meters()
         Hide.SweepUI()
@@ -1673,6 +1809,7 @@ function Hide.Start()
     Hide.AllNamePlates()
     Utils.Guard("meters", Hide.Meters)()
     Hide.SweepUI()
+    GuardedMotdBox()
     -- EllesmereUI frames can spawn after us, and its unit frames cache names: ask for a repaint.
     C_Timer.After(2, function()
         if OA.live then
@@ -1696,6 +1833,7 @@ function Hide.Stop()
     wipe(platesDue)
     waitingCount = 0
     Utils.Guard("put back", PutBack)()
+    GuardedMotdBox()
     RedrawMeterNames()
     Hide.RestoreCVars()
     Hide.UnmuteAll()

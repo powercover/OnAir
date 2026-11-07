@@ -106,13 +106,16 @@ local permissive = { __index = function(t, k)
   return nil
 end }
 for _, kind in ipairs({ "Frame", "Button", "Texture", "FontString", "EditBox", "ScrollFrame", "StatusBar",
-  "AnimationGroup", "Animation", "GameTooltip", "ScrollingMessageFrame" }) do
+  "AnimationGroup", "Animation", "GameTooltip", "ScrollingMessageFrame", "SimpleHTML" }) do
   local index = setmetatable({}, permissive)
   metas[kind] = { __index = index }
 end
 -- As in the game, a font object brings its own alignment: centered.
 function metas.ScrollingMessageFrame.__index:SetFontObject(font) self._font, self._jh = font, "CENTER" end
 function metas.ScrollingMessageFrame.__index:SetJustifyH(j) self._jh = j end
+-- As in the game, a SimpleHTML's text can't be read back; `true` shows it as it is, no markup.
+function metas.SimpleHTML.__index:GetText() error("a SimpleHTML has no GetText") end
+function metas.SimpleHTML.__index:SetText(t, plain) self._text, self._plain = t, plain end
 
 function CreateFrame(kind, name, parent) return NewObject(kind, name, parent) end
 function CreateFont(name) return NewObject("Font", name) end
@@ -130,6 +133,11 @@ StaticPopupDialogs = {}
 SlashCmdList = {}
 SOUNDKIT = {}
 STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
+-- The game's wording (GlobalStrings, enUS).
+COMMUNITIES_MESSAGE_OF_THE_DAY_FORMAT = 'Message of the Day: "%s"'
+GUILD_MOTD_TEMPLATE = 'Guild Message of the Day: "%s"'
+GUILD_NEWS_MOTD = "MotD: %s"
+COMMUNITIES_CALENDAR_MOTD_FORMAT = '"%s"'
 UNIT_NAME_FONT = "Fonts\\FRIZQT__.TTF"
 UNIT_NAME_FONT_ROMAN = "Fonts\\FRIZQT__.TTF"
 UNIT_NAME_FONT_CYRILLIC = "Fonts\\FRIZQT___CYR.TTF"
@@ -253,7 +261,7 @@ C_BattleNet = { GetFriendAccountInfo = function() return { bnetAccountID = 7, ac
   GetAccountInfoByID = function() return { bnetAccountID = 7, accountName = "|Kp7|k", battleTag = "Zed#1111" } end }
 C_Club = { GetSubscribedClubs = function() return { { clubId = 1, name = "Cozy Club", clubType = 1 } } end,
   GetClubMembers = function() return { 1 } end, GetMemberInfo = function() return { name = "Clubber-Kazzak" } end }
-C_GuildInfo = { GuildRoster = noop }
+C_GuildInfo = { GuildRoster = noop, GetMOTD = function() return "" end }
 C_LFGList = { GetSearchResults = function() return 0, {} end, GetApplicants = function() return {} end,
   GetSearchResultInfo = function(id) return { leaderName = "Granydead-Archimonde", numMembers = 2 } end,
   GetSearchResultPlayerInfo = function(id, i) return ({ { name = "Granydead-Archimonde" }, { name = "Darkares-Archimonde" } })[i] end }
@@ -1093,6 +1101,300 @@ do
     tostring(untouched), tostring(tomAlias), tostring(mine.label:GetText()))
 end
 
+-- The Custom page with every group off, through the whole addon: one Battle.net friend and one
+-- player masked (a label, a chat sender, names in a message) and nobody else, also after a settings
+-- change while live, with the real names back when it ends. The page says what to type.
+do
+  local who, saved = OA.db.who, {}
+  for k, v in pairs(who) do saved[k], who[k] = v, false end
+  OA.db.custom["Zed#1111"], OA.db.custom["Bobfix"] = "Solo Guest", "Fixed Bob"
+  OA.NamesChanged(false)
+  OA.GoLive(); run(0.5)
+  OA.Names.AddBNet(7, "|Kp7|k", "Zed#1111", "Zedchar-Kazzak")
+  local line = "Zed#1111 with |Kp7|k as Zedchar"
+  local fs = CreateFrame("Frame", nil, UIParent):CreateFontString()
+  fs:SetText(line)
+  local masked = fs:GetText() == "Solo Guest with Solo Guest as Solo Guest"
+  local _, msg, author = FILTERS["CHAT_MSG_SAY"](ChatFrame1, "CHAT_MSG_SAY", "hi from Bobfix and Zedchar", "Bobfix-Kazzak", "", "", "", "", 0, 0, "", 0, 9101, "g")
+  local chat = author == "Fixed Bob" and msg == "hi from Fixed Bob and Solo Guest"
+  local _, msg2, author2 = FILTERS["CHAT_MSG_SAY"](ChatFrame1, "CHAT_MSG_SAY", "hi from Drifter", "Drifter-Kazzak", "", "", "", "", 0, 0, "", 0, 9102, "g")
+  local others = author2 == "Drifter-Kazzak" and msg2 == "hi from Drifter"
+  OA.NamesChanged(false); run(0.05)
+  local later = CreateFrame("Frame", nil, UIParent):CreateFontString()
+  later:SetText(line)
+  local kept = later:GetText() == "Solo Guest with Solo Guest as Solo Guest"
+  OA.EndLive()
+  local back = later:GetText() == line
+  OA.db.custom["Zed#1111"], OA.db.custom["Bobfix"] = nil, nil
+  for k, v in pairs(saved) do who[k] = v end
+  OA.NamesChanged(false)
+  UI.ShowPage("custom", true)
+  local noted, stack = false, { OnAirConsole }
+  while #stack > 0 and not noted do
+    local frame = table.remove(stack)
+    for _, region in ipairs(frame._regions or {}) do
+      noted = noted or (type(region._text) == "string" and region._text:lower():find("name#1234", 1, true) ~= nil)
+    end
+    for _, child in ipairs(frame._children or {}) do stack[#stack + 1] = child end
+  end
+  FIXED_ALONE_OK = masked and chat and others and kept and back and noted
+  FIXED_ALONE_DBG = string.format("masked=%s chat=%s others=%s kept=%s back=%s noted=%s", tostring(masked), tostring(chat),
+    tostring(others), tostring(kept), tostring(back), tostring(noted))
+end
+
+-- The guild window's chat through the whole addon: its messages have a switch of their own, apart
+-- from the names. A protected token anywhere else goes by the friends switch, as before.
+do
+  CommunitiesFrame = CreateFrame("Frame", "CommunitiesFrame", UIParent)
+  CommunitiesFrame.Chat = CreateFrame("Frame", nil, CommunitiesFrame)
+  local message = CreateFrame("ScrollingMessageFrame", nil, CommunitiesFrame.Chat)
+  CommunitiesFrame.Chat.MessageFrame = message
+  -- As in the game: a message frame keeps its lines in a container of its own.
+  message.FontStringContainer = CreateFrame("Frame", nil, message)
+  local chat = message.FontStringContainer
+  local elsewhere = CreateFrame("Frame", nil, UIParent)
+  local function Line(frame, text)
+    local fs = frame:CreateFontString()
+    fs:SetText(text)
+    return fs
+  end
+  local where, who, saved = OA.db.where, OA.db.who, {}
+  local raw = "07:41 [Gildy]: |Kq9|k"
+  OA.Names.AddFull("Gildy-Kazzak", "other")
+  OA.GoLive(); run(0.5)
+  local first = Line(chat, raw)
+  local alias = OA.Names.Scrub("Gildy")
+  local hidden = first:GetText() == "07:41 [" .. alias .. "]: (hidden)"
+  where.guildChat = false
+  OA.NamesChanged(false); run(0.05)
+  local shown = Line(chat, raw):GetText() == "07:41 [" .. alias .. "]: |Kq9|k"
+  where.guildChat = true
+  for k, v in pairs(who) do saved[k], who[k] = v, false end
+  OA.NamesChanged(false); run(0.05)
+  local alone = Line(chat, raw):GetText() == "07:41 [Gildy]: (hidden)"
+  local otherOff = Line(elsewhere, "|Kq9|k"):GetText() == "|Kq9|k"
+  for k, v in pairs(saved) do who[k] = v end
+  OA.NamesChanged(false); run(0.05)
+  local otherOn = Line(elsewhere, "|Kq9|k"):GetText() == "(hidden)"
+  local last = Line(chat, raw)
+  OA.EndLive()
+  local back = last:GetText() == raw
+  CommunitiesFrame = nil
+  UI.ShowPage("hide", true)
+  local listed, stack = false, { OnAirConsole }
+  while #stack > 0 and not listed do
+    local frame = table.remove(stack)
+    for _, region in ipairs(frame._regions or {}) do
+      listed = listed or (type(region._text) == "string" and region._text:lower():find("guild window messages", 1, true) ~= nil)
+    end
+    for _, child in ipairs(frame._children or {}) do stack[#stack + 1] = child end
+  end
+  GUILD_WINDOW_OK = hidden and shown and alone and otherOff and otherOn and back and listed
+  GUILD_WINDOW_DBG = string.format("hidden=%s shown=%s alone=%s otherOff=%s otherOn=%s back=%s listed=%s", tostring(hidden),
+    tostring(shown), tostring(alone), tostring(otherOff), tostring(otherOn), tostring(back), tostring(listed))
+end
+
+-- The guild's message of the day, everywhere the game shows it: the guild window's chat, every chat
+-- window, the Guild News tab, the Guild Info tab (a SimpleHTML, not a label) and two tooltips. A
+-- switch of its own, whatever the others say.
+do
+  local where = OA.db.where
+  local motd = "discord.gg/private"
+  C_GuildInfo.GetMOTD = function() return motd end
+  CommunitiesFrame = CreateFrame("Frame", "CommunitiesFrame", UIParent)
+  CommunitiesFrame.Chat = CreateFrame("Frame", nil, CommunitiesFrame)
+  local message = CreateFrame("ScrollingMessageFrame", nil, CommunitiesFrame.Chat)
+  CommunitiesFrame.Chat.MessageFrame = message
+  message.FontStringContainer = CreateFrame("Frame", nil, message)
+  local window = message.FontStringContainer
+  local elsewhere = CreateFrame("Frame", nil, UIParent)
+  local info = CreateFrame("Frame", "CommunitiesFrameGuildDetailsFrameInfo", UIParent)
+  info.MOTDScrollFrame = CreateFrame("ScrollFrame", nil, info)
+  local box = CreateFrame("SimpleHTML", nil, info.MOTDScrollFrame)
+  info.MOTDScrollFrame.MOTD = box
+  local letter = CreateFrame("SimpleHTML", nil, UIParent)
+  local function Line(frame, text)
+    local fs = frame:CreateFontString()
+    fs:SetText(text)
+    return fs
+  end
+  local chatLine = COMMUNITIES_MESSAGE_OF_THE_DAY_FORMAT:format(motd)
+  local chatHidden = 'Message of the Day: "(hidden)"'
+  local mainLine = GUILD_MOTD_TEMPLATE:format(motd)
+  local mainHidden = 'Guild Message of the Day: "(hidden)"'
+
+  -- The window was opened before going live.
+  box:SetText(motd, true)
+  local early = Line(window, chatLine)
+  OA.GoLive(); run(0.5)
+  local atStart = box._text == "(hidden)" and box._plain == true and early:GetText() == chatHidden
+
+  -- Each kind of line; the headings and other text stay.
+  local news = elsewhere:CreateFontString()
+  news:SetFormattedText(GUILD_NEWS_MOTD, motd)
+  local inChat = Line(window, chatLine):GetText() == chatHidden
+  local inMain = Line(elsewhere, mainLine):GetText() == mainHidden
+    and Line(elsewhere, "12:34 " .. mainLine):GetText() == "12:34 " .. mainHidden
+  local inNews = news:GetText() == "MotD: (hidden)"
+  local others = Line(elsewhere, "Message of the Day"):GetText() == "Message of the Day"
+    and Line(elsewhere, 'He said "hi"'):GetText() == 'He said "hi"'
+
+  -- Changed while live: the game sets the box again. Other SimpleHTML text isn't touched.
+  motd = "new: discord.gg/other"
+  box:SetText(motd, true)
+  letter:SetText("a letter", true)
+  local changed = box._text == "(hidden)" and letter._text == "a letter"
+
+  -- Two tooltips: the whole line (Guild News) and in quotes (the calendar button). Names as ever.
+  OA.Names.AddFull("Gildy-Kazzak", "other")
+  local count = #GameTooltip._regions
+  local tipWhole, tipQuoted, tipOther = GameTooltip:CreateFontString(), GameTooltip:CreateFontString(), GameTooltip:CreateFontString()
+  local function Tips()
+    tipWhole._text, tipQuoted._text, tipOther._text = motd, COMMUNITIES_CALENDAR_MOTD_FORMAT:format(motd), "Gildy"
+    GameTooltip:Show()
+  end
+  local alias = OA.Names.Scrub("Gildy")
+  Tips()
+  local tips = tipWhole:GetText() == "(hidden)" and tipQuoted:GetText() == '"(hidden)"' and tipOther:GetText() == alias
+
+  -- Alone: Interface text and Tooltips off, the message still goes and names stay.
+  where.interface, where.tooltips = false, false
+  OA.NamesChanged(false); run(0.05)
+  Tips()
+  local alone = Line(window, chatLine):GetText() == chatHidden and tipWhole:GetText() == "(hidden)" and tipOther:GetText() == "Gildy"
+  where.interface, where.tooltips = true, true
+  OA.NamesChanged(false); run(0.05)
+
+  -- /onair check says how it stands, and finds a label that still holds it.
+  local report
+  local export = OA.Moments.ShowExport
+  OA.Moments.ShowExport = function(_, text) report = text end
+  OA.Check.Run()
+  local saysHidden = report:find("Guild message of the day: hidden in the Guild Info tab", 1, true) ~= nil
+    and report:find("still in a label", 1, true) == nil
+  local stray = CreateFrame("Frame", "MotdStray", UIParent):CreateFontString()
+  stray._text = "From the guild: " .. motd -- set behind OnAir's back
+  OA.Check.Run()
+  local saysStray = report:find("still in a label: MotdStray", 1, true) ~= nil
+  stray._text = nil
+
+  -- The switch off: everything back at once, and what the game sets next stays.
+  local held = Line(window, chatLine)
+  where.guildMotd = false
+  OA.NamesChanged(false); run(0.1)
+  local offNow = box._text == motd and box._plain == true and held:GetText() == chatLine
+  box:SetText(motd, true)
+  Tips()
+  local offNext = box._text == motd and Line(elsewhere, mainLine):GetText() == mainLine and tipWhole:GetText() == motd
+  -- Still off: names in the message are swapped as everywhere else, in the box too.
+  local plainMotd = motd
+  motd = "ask Gildy: discord.gg/other"
+  box:SetText(motd, true)
+  local offNames = box._text == OA.Names.Scrub(motd) and box._plain == true
+  where.interface = false
+  OA.NamesChanged(false); run(0.05)
+  local offRaw = box._text == motd and box._plain == true
+  where.interface = true
+  OA.NamesChanged(false); run(0.05)
+  offNames = offNames and box._text == OA.Names.Scrub(motd)
+  motd = plainMotd
+  box:SetText(motd, true)
+  offNext = offNext and box._text == motd
+  Line(elsewhere, "From the guild: " .. motd) -- shown on purpose: the switch is off
+  OA.Check.Run()
+  local saysOff = report:find("Guild message of the day: switch off", 1, true) ~= nil
+    and report:find("still in a label", 1, true) == nil
+
+  -- On again: hidden at once.
+  where.guildMotd = true
+  OA.NamesChanged(false); run(0.1)
+  local onAgain = box._text == "(hidden)" and held:GetText() == chatHidden
+
+  -- The broadcast ends: the real text back.
+  OA.EndLive()
+  local back = box._text == motd and box._plain == true and held:GetText() == chatLine
+  box:SetText(motd, true)
+  box:SetText("ask Gildy: discord.gg/other", true)
+  local offAir = box._text == "ask Gildy: discord.gg/other"
+
+  -- No message: an empty box stays empty.
+  motd = ""
+  box:SetText("", true)
+  OA.GoLive(); run(0.1)
+  local empty = box._text == ""
+  box:SetText("", true)
+  empty = empty and box._text == ""
+  OA.Check.Run()
+  local saysNone = report:find("Guild message of the day: none set", 1, true) ~= nil
+
+  -- A message the box doesn't have hidden yet (the game's event follows), and a window not opened yet.
+  motd = "discord.gg/later"
+  OA.Check.Run()
+  local saysShowing = report:find("Guild message of the day: SHOWING in the Guild Info tab", 1, true) ~= nil
+  CommunitiesFrameGuildDetailsFrameInfo = nil
+  OA.Check.Run()
+  local saysLater = report:find("Guild message of the day: Guild Info tab not opened yet", 1, true) ~= nil
+  OA.EndLive()
+
+  OA.Moments.ShowExport = export
+  for i = #GameTooltip._regions, count + 1, -1 do GameTooltip._regions[i] = nil end
+  CommunitiesFrame, CommunitiesFrameGuildDetailsFrameInfo = nil, nil
+  C_GuildInfo.GetMOTD = function() return "" end
+  UI.ShowPage("hide", true)
+  local listed, stack = false, { OnAirConsole }
+  while #stack > 0 and not listed do
+    local frame = table.remove(stack)
+    for _, region in ipairs(frame._regions or {}) do
+      listed = listed or (type(region._text) == "string" and region._text:lower():find("guild message of the day", 1, true) ~= nil)
+    end
+    for _, child in ipairs(frame._children or {}) do stack[#stack + 1] = child end
+  end
+  GUILD_MOTD_OK = atStart and inChat and inMain and inNews and others and changed and tips and alone and saysHidden and saysStray
+    and offNow and offNext and offNames and offRaw and saysOff and onAgain and back and offAir and empty and saysNone and saysShowing and saysLater and listed
+  GUILD_MOTD_DBG = string.format("atStart=%s inChat=%s inMain=%s inNews=%s others=%s changed=%s tips=%s alone=%s saysHidden=%s saysStray=%s offNow=%s offNext=%s offNames=%s offRaw=%s saysOff=%s onAgain=%s back=%s offAir=%s empty=%s saysNone=%s saysShowing=%s saysLater=%s listed=%s",
+    tostring(atStart), tostring(inChat), tostring(inMain), tostring(inNews), tostring(others), tostring(changed), tostring(tips), tostring(alone),
+    tostring(saysHidden), tostring(saysStray), tostring(offNow), tostring(offNext), tostring(offNames), tostring(offRaw), tostring(saysOff), tostring(onAgain), tostring(back),
+    tostring(offAir), tostring(empty), tostring(saysNone), tostring(saysShowing), tostring(saysLater), tostring(listed))
+end
+
+-- A guild's name with "Guild names" off, through the whole addon: whole, also with a player's name
+-- in it, in Retail and Forever. /onair check doesn't call it a leak. On again: its alias again.
+do
+  local who = OA.db.who
+  local guildInfo = GetGuildInfo
+  local raw, other = "Lost Keys Bram", "Ten Past Zed"
+  GetGuildInfo = function(unit) if unit == "player" then return raw end return other end
+  local function Full(first) return OA.Utils.IS_FOREVER and (first .. " Smith") or (first .. "-Kazzak") end
+  local holder = CreateFrame("Frame", nil, UIParent)
+  local function Line(text)
+    local fs = holder:CreateFontString()
+    fs:SetText(text)
+    return fs
+  end
+  OA.Names.AddFull(Full("Bram"), "other")
+  OA.GoLive(); run(0.5)
+  local label = Line(raw)
+  local masked = label:GetText() ~= raw and label:GetText():find("Bram", 1, true) == nil
+  who.guilds = false
+  OA.NamesChanged(false); run(0.1)
+  local whole = label:GetText() == raw and Line(raw):GetText() == raw
+  local player = Line("Bram"):GetText() ~= "Bram"
+  local withName = OA.Check.Run()
+  label:SetText("")
+  local withoutName = OA.Check.Run()
+  local noLeak = withName == withoutName
+  label:SetText(raw)
+  who.guilds = true
+  OA.NamesChanged(false); run(0.1)
+  local maskedAgain = label:GetText() ~= raw and label:GetText():find("Bram", 1, true) == nil
+  OA.EndLive()
+  local back = label:GetText() == raw
+  GetGuildInfo = guildInfo
+  GUILD_WHOLE_OK = masked and whole and player and noLeak and maskedAgain and back
+  GUILD_WHOLE_DBG = string.format("masked=%s whole=%s player=%s noLeak=%s maskedAgain=%s back=%s", tostring(masked), tostring(whole),
+    tostring(player), tostring(noLeak), tostring(maskedAgain), tostring(back))
+end
+
 -- performance: big lists are read at most every few seconds, the guild's own community isn't
 -- read as a community, a burst of nameplates looks at each plate once, and a chat line shown in
 -- several windows is worked out once (counted, not timed)
@@ -1355,7 +1657,7 @@ def run(toc, look="viewfinder"):
                               "SNAP_FREE", "DONE_OK", "SNAP_RIGHT_CENTER", "SNAP_PIECE",
                               "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS",
                               "SNAP_MODES", "LIVE_DRAG", "FIRST_EDIT", "PANELS_OPENED",
-                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "EUI_RAID_NAMES", "EUI_RAID_DBG", "LFG_SECRET_OK", "EUI_INTERRUPT_OK", "EUI_INTERRUPT_DBG", "MINIMAP_OK", "MINIMAP_DBG", "CAMERA_ZOOM_OK", "CAMERA_ZOOM_DBG", "CHAPTER_NOTE_OK", "CHAPTER_NOTE_DBG", "EUI_METER_LIST_OK", "EUI_METER_LIST_DBG", "CLUB_SECRET_OK", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "METER_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
+                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "EUI_RAID_NAMES", "EUI_RAID_DBG", "LFG_SECRET_OK", "EUI_INTERRUPT_OK", "EUI_INTERRUPT_DBG", "MINIMAP_OK", "MINIMAP_DBG", "CAMERA_ZOOM_OK", "CAMERA_ZOOM_DBG", "CHAPTER_NOTE_OK", "CHAPTER_NOTE_DBG", "EUI_METER_LIST_OK", "EUI_METER_LIST_DBG", "FIXED_ALONE_OK", "FIXED_ALONE_DBG", "GUILD_WINDOW_OK", "GUILD_WINDOW_DBG", "GUILD_MOTD_OK", "GUILD_MOTD_DBG", "GUILD_WHOLE_OK", "GUILD_WHOLE_DBG", "CLUB_SECRET_OK", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "METER_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
 
 
 # One login (or /reload) with the blank name font: what the game's name fonts hold after OnAir's
@@ -1451,6 +1753,12 @@ if __name__ == "__main__":
             print(label)
             for k, v in results.items():
                 print(f"  {k}: {v!r}")
+            motd_ok = results["GUILD_MOTD_OK"]
+            print(f"  {'ok  ' if motd_ok else 'FAIL'} the guild's message of the day: hidden everywhere the game shows it, a switch of its own " + str(results["GUILD_MOTD_DBG"]))
+            failures += 0 if motd_ok else 1
+            whole_ok = results["GUILD_WHOLE_OK"]
+            print(f"  {'ok  ' if whole_ok else 'FAIL'} a guild's name with its switch off stays whole, and isn't called a leak " + str(results["GUILD_WHOLE_DBG"]))
+            failures += 0 if whole_ok else 1
             if label.startswith("Retail"):
                 checks = [
                     ("Bob" not in results["RESULT_TEXT"] and "Stranger" not in results["RESULT_TEXT"]
@@ -1502,6 +1810,8 @@ if __name__ == "__main__":
                     (results["MINIMAP_OK"], "Shield hides the minimap as a frame (its blips too), shows it after only if it was shown " + str(results["MINIMAP_DBG"])),
                     (results["CAMERA_ZOOM_OK"], "zoom speed is yours: kept across presets, on with the camera off, gone after Back to game defaults; another setting turns the camera on " + str(results["CAMERA_ZOOM_DBG"])),
                     (results["METER_ALIAS_OK"], "meter rows in combat: your row and remembered players read as their alias"),
+                    (results["GUILD_WINDOW_OK"], "the guild window's messages: a switch of their own, apart from the names " + str(results["GUILD_WINDOW_DBG"])),
+                    (results["FIXED_ALONE_OK"], "fixed aliases with every group off: one friend and one player masked, nobody else; the page says what to type " + str(results["FIXED_ALONE_DBG"])),
                     (results["EUI_METER_LIST_OK"], "EllesmereUI meter rows from its own row list: names masked in combat whatever the layout, your row and a remembered player as their alias " + str(results["EUI_METER_LIST_DBG"])),
                     (results["OVERHEAD_OK"], "names above heads: name-only plates while live, off in instances, your settings back after"),
                     (results["BLANK_PAGE_OK"], "blank name font: the Hide page says where it stands; switching it in a session sets nothing"),
