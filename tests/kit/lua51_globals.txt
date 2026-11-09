@@ -16,6 +16,7 @@ C_LFGList
 C_NamePlate
 C_PvP
 C_RecentAllies
+C_RestrictedActions
 C_Timer
 CancelDuel
 CancelTrade

@@ -1,5 +1,14 @@
 # OnAir
 
+## 1.0.4
+
+- Fixed "Interface action failed because of an AddOn" (in BugSack: "AddOn 'OnAir' tried to call the
+  protected function") in dungeons, raids, boss fights, Mythic+ and PvP matches. There the game
+  doesn't let addons read the guild message of the day, and OnAir asked for it with every tooltip.
+  OnAir now keeps a copy of the message and asks the game only where it's allowed. The message is
+  hidden as before.
+- /onair check: says when the game is keeping the message of the day from addons.
+
 ## 1.0.3
 
 - Custom page: a fixed alias now works with that person's group switched off, so you can hide one

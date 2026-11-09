@@ -143,7 +143,9 @@ UNIT_NAME_FONT_ROMAN = "Fonts\\FRIZQT__.TTF"
 UNIT_NAME_FONT_CYRILLIC = "Fonts\\FRIZQT___CYR.TTF"
 UNIT_NAME_FONT_KOREAN = "Fonts\\2002B.TTF"
 UNIT_NAME_FONT_CHINESE = "Fonts\\ARKai_T.ttf"
-Enum = { TooltipDataType = { Unit = 2 }, ClubType = { Guild = 2 } }
+Enum = { TooltipDataType = { Unit = 2 }, ClubType = { Guild = 2 },
+  AddOnRestrictionType = { Combat = 0, Encounter = 1, ChallengeMode = 2, PvPMatch = 3, Map = 4, Chat = 5 },
+  AddOnRestrictionState = { Inactive = 0, Activating = 1, Active = 2 } }
 
 local hookLog = {}
 function hooksecurefunc(a, b, c)
@@ -266,7 +268,12 @@ C_LFGList = { GetSearchResults = function() return 0, {} end, GetApplicants = fu
   GetSearchResultInfo = function(id) return { leaderName = "Granydead-Archimonde", numMembers = 2 } end,
   GetSearchResultPlayerInfo = function(id, i) return ({ { name = "Granydead-Archimonde" }, { name = "Darkares-Archimonde" } })[i] end }
 C_RecentAllies = { GetRecentAllies = function() return { { characterData = { name = "Nninno", realmName = "Kazzak" } } } end }
-C_ChatInfo = { InChatMessagingLockdown = function() return false end }
+-- Addon restrictions, as the game keeps them: each kind's state, and chat messaging locked down
+-- (dungeons, raids, boss fights, Mythic+, PvP matches).
+RESTRICTIONS, CHAT_LOCKDOWN = {}, false
+C_RestrictedActions = { GetAddOnRestrictionState = function(kind) return RESTRICTIONS[kind] or 0 end,
+  IsAddOnRestrictionActive = function(kind) return RESTRICTIONS[kind] == 2 end }
+C_ChatInfo = { InChatMessagingLockdown = function() return CHAT_LOCKDOWN end }
 C_ChatBubbles = { GetAllChatBubbles = function() return {} end }
 local menus = {}
 Menu = { ModifyMenu = function(tag, fn) menus[tag] = fn end }
@@ -1201,6 +1208,8 @@ do
   local where = OA.db.where
   local motd = "discord.gg/private"
   C_GuildInfo.GetMOTD = function() return motd end
+  -- Each new message comes with the game's event (then the Guild Info tab sets its box from it).
+  fire("GUILD_MOTD", motd)
   CommunitiesFrame = CreateFrame("Frame", "CommunitiesFrame", UIParent)
   CommunitiesFrame.Chat = CreateFrame("Frame", nil, CommunitiesFrame)
   local message = CreateFrame("ScrollingMessageFrame", nil, CommunitiesFrame.Chat)
@@ -1241,6 +1250,7 @@ do
 
   -- Changed while live: the game sets the box again. Other SimpleHTML text isn't touched.
   motd = "new: discord.gg/other"
+  fire("GUILD_MOTD", motd)
   box:SetText(motd, true)
   letter:SetText("a letter", true)
   local changed = box._text == "(hidden)" and letter._text == "a letter"
@@ -1289,6 +1299,7 @@ do
   -- Still off: names in the message are swapped as everywhere else, in the box too.
   local plainMotd = motd
   motd = "ask Gildy: discord.gg/other"
+  fire("GUILD_MOTD", motd)
   box:SetText(motd, true)
   local offNames = box._text == OA.Names.Scrub(motd) and box._plain == true
   where.interface = false
@@ -1298,6 +1309,7 @@ do
   OA.NamesChanged(false); run(0.05)
   offNames = offNames and box._text == OA.Names.Scrub(motd)
   motd = plainMotd
+  fire("GUILD_MOTD", motd)
   box:SetText(motd, true)
   offNext = offNext and box._text == motd
   Line(elsewhere, "From the guild: " .. motd) -- shown on purpose: the switch is off
@@ -1319,6 +1331,7 @@ do
 
   -- No message: an empty box stays empty.
   motd = ""
+  fire("GUILD_MOTD", motd)
   box:SetText("", true)
   OA.GoLive(); run(0.1)
   local empty = box._text == ""
@@ -1329,6 +1342,7 @@ do
 
   -- A message the box doesn't have hidden yet (the game's event follows), and a window not opened yet.
   motd = "discord.gg/later"
+  fire("GUILD_MOTD", motd)
   OA.Check.Run()
   local saysShowing = report:find("Guild message of the day: SHOWING in the Guild Info tab", 1, true) ~= nil
   CommunitiesFrameGuildDetailsFrameInfo = nil
@@ -1340,6 +1354,7 @@ do
   for i = #GameTooltip._regions, count + 1, -1 do GameTooltip._regions[i] = nil end
   CommunitiesFrame, CommunitiesFrameGuildDetailsFrameInfo = nil, nil
   C_GuildInfo.GetMOTD = function() return "" end
+  fire("GUILD_MOTD", "")
   UI.ShowPage("hide", true)
   local listed, stack = false, { OnAirConsole }
   while #stack > 0 and not listed do
@@ -1355,6 +1370,156 @@ do
     tostring(atStart), tostring(inChat), tostring(inMain), tostring(inNews), tostring(others), tostring(changed), tostring(tips), tostring(alone),
     tostring(saysHidden), tostring(saysStray), tostring(offNow), tostring(offNext), tostring(offNames), tostring(offRaw), tostring(saysOff), tostring(onAgain), tostring(back),
     tostring(offAir), tostring(empty), tostring(saysNone), tostring(saysShowing), tostring(saysLater), tostring(listed))
+end
+
+-- The message of the day where the game keeps it from addons (dungeons, raids, boss fights, Mythic+,
+-- PvP matches). Asking for it there is a blocked action, reported even inside pcall, so OnAir never
+-- asks then: it keeps the message from the game's event and the Guild Info tab, asks once things are
+-- open again, and goes on hiding it with that copy.
+do
+  local message = "discord.gg/raid-night"
+  local reads, blocked = 0, 0
+  local inCombat = false
+  local combat = InCombatLockdown
+  InCombatLockdown = function() return inCombat end
+  local function Locked()
+    if inCombat or CHAT_LOCKDOWN then return true end
+    for _, state in pairs(RESTRICTIONS) do
+      if state == Enum.AddOnRestrictionState.Active then return true end
+    end
+    return false
+  end
+  -- As the game: blocked (counted, nothing returned) while anything restricts addons.
+  C_GuildInfo.GetMOTD = function()
+    if Locked() then blocked = blocked + 1; return end
+    reads = reads + 1
+    return message
+  end
+  local function Secret() return { __secret = true } end
+  local function Inside(on)
+    RESTRICTIONS[Enum.AddOnRestrictionType.Map] = on and Enum.AddOnRestrictionState.Active or nil
+    CHAT_LOCKDOWN = on
+  end
+  local count = #GameTooltip._regions
+  local tipWhole, tipQuoted = GameTooltip:CreateFontString(), GameTooltip:CreateFontString()
+  local function Tips()
+    tipWhole._text, tipQuoted._text = message, COMMUNITIES_CALENDAR_MOTD_FORMAT:format(message)
+    GameTooltip:Show()
+    return tipWhole:GetText() == "(hidden)" and tipQuoted:GetText() == '"(hidden)"'
+  end
+  local report
+  local export = OA.Moments.ShowExport
+  OA.Moments.ShowExport = function(_, text) report = text end
+  local function Says(text)
+    OA.Check.Run()
+    return report:find("Guild message of the day: " .. text, 1, true) ~= nil
+  end
+
+  -- Not known (it came in a dungeon): going live asks the game, before any window is opened, so
+  -- tooltips in the next dungeon have it.
+  Inside(true); fire("GUILD_MOTD", Secret()); Inside(false)
+  GameTooltip:Hide()
+  OA.GoLive(); run(0.5)
+  Inside(true)
+  local hiddenEarly = Tips()
+  local early = hiddenEarly and reads == 1
+  OA.EndLive()
+  Inside(false)
+
+  -- The game's event brings each new message: kept, nothing asked.
+  message = "discord.gg/new-room"
+  fire("GUILD_MOTD", message)
+  OA.GoLive(); run(0.5)
+  local fromEvent = reads == 1 and blocked == 0
+
+  -- In a dungeon: tooltips, a setting change and /onair check use the copy; the game isn't asked.
+  Inside(true)
+  local tipsInside = Tips()
+  for _ = 1, 20 do tipsInside = Tips() and tipsInside end
+  OA.NamesChanged(false); run(0.1)
+  local saysNotOpened = Says("Guild Info tab not opened yet")
+  local quietInside = reads == 1 and blocked == 0
+
+  -- The Guild Info tab opened in there: the game sets its box (addons can't ask), and it's hidden.
+  local info = CreateFrame("Frame", "CommunitiesFrameGuildDetailsFrameInfo", UIParent)
+  info.MOTDScrollFrame = CreateFrame("ScrollFrame", nil, info)
+  local box = CreateFrame("SimpleHTML", nil, info.MOTDScrollFrame)
+  info.MOTDScrollFrame.MOTD = box
+  box:SetText(message, true)
+  local boxInside = box._text == "(hidden)"
+
+  -- A new message in there comes as a secret: the box hidden, /onair check says it isn't known, and
+  -- the game still isn't asked, whatever restricts addons (each kind alone, chat or combat alone).
+  message = "discord.gg/third"
+  fire("GUILD_MOTD", Secret())
+  box:SetText(Secret(), true)
+  local secretHidden = box._text == "(hidden)"
+  local saysUnknown = Says("unknown for now")
+  Inside(false)
+  local each = true
+  for _, case in ipairs({ "Combat", "Encounter", "ChallengeMode", "PvPMatch", "Map", "Chat", "chat", "combat" }) do
+    local kind = Enum.AddOnRestrictionType[case]
+    if kind then RESTRICTIONS[kind] = Enum.AddOnRestrictionState.Active end
+    CHAT_LOCKDOWN, inCombat = case == "chat", case == "combat"
+    Tips(); OA.NamesChanged(false); run(0.05); Says("")
+    each = each and reads == 1 and blocked == 0
+    if kind then RESTRICTIONS[kind] = nil end
+  end
+  CHAT_LOCKDOWN, inCombat = false, false
+  fire("PLAYER_REGEN_ENABLED")
+
+  -- Out again: the first tooltip asks the game, once; the new message is hidden from then on.
+  local tipsAfter = Tips()
+  for _ = 1, 5 do tipsAfter = Tips() and tipsAfter end
+  local readOnce = reads == 2 and blocked == 0 and Says("hidden in the Guild Info tab")
+
+  -- The Guild Info tab shown in a dungeon: the message the game puts in the box is kept.
+  Inside(true)
+  message = "discord.gg/fourth"
+  fire("GUILD_MOTD", Secret())
+  box:SetText(message, true)
+  local fromBox = Tips() and reads == 2 and blocked == 0
+
+  -- Off the air in there with a message not known: the box gets no old or empty text, and the
+  -- game's next one stays.
+  local old = message
+  message = "discord.gg/fifth"
+  fire("GUILD_MOTD", Secret())
+  box:SetText(Secret(), true)
+  OA.EndLive()
+  local noStale = box._text ~= old and box._text ~= "" and blocked == 0
+  box:SetText(message, true)
+  local gameBack = box._text == message
+
+  -- A message set in a dungeon where there was none: the box holds the game's secret, and going
+  -- live there hides it though it isn't known. Out again and off the air: the real one back.
+  Inside(false)
+  message = ""
+  fire("GUILD_MOTD", message)
+  box:SetText(message, true)
+  Inside(true)
+  message = "discord.gg/sixth"
+  fire("GUILD_MOTD", Secret())
+  box:SetText(Secret(), true)
+  OA.GoLive(); run(0.5)
+  local hiddenUnknown = box._text == "(hidden)" and blocked == 0
+  Inside(false)
+  OA.EndLive()
+  local back = box._text == message and reads == 3 and blocked == 0
+
+  OA.Moments.ShowExport = export
+  for i = #GameTooltip._regions, count + 1, -1 do GameTooltip._regions[i] = nil end
+  CommunitiesFrameGuildDetailsFrameInfo = nil
+  InCombatLockdown = combat
+  RESTRICTIONS, CHAT_LOCKDOWN = {}, false
+  C_GuildInfo.GetMOTD = function() return "" end
+  fire("GUILD_MOTD", "")
+  GUILD_MOTD_SAFE_OK = early and fromEvent and tipsInside and saysNotOpened and quietInside and boxInside and secretHidden
+    and saysUnknown and each and tipsAfter and readOnce and fromBox and noStale and gameBack and hiddenUnknown and back
+  GUILD_MOTD_SAFE_DBG = string.format("early=%s fromEvent=%s tipsInside=%s saysNotOpened=%s quietInside=%s boxInside=%s secretHidden=%s saysUnknown=%s each=%s tipsAfter=%s readOnce=%s fromBox=%s noStale=%s gameBack=%s hiddenUnknown=%s back=%s reads=%d blocked=%d",
+    tostring(early), tostring(fromEvent), tostring(tipsInside), tostring(saysNotOpened), tostring(quietInside), tostring(boxInside),
+    tostring(secretHidden), tostring(saysUnknown), tostring(each), tostring(tipsAfter), tostring(readOnce), tostring(fromBox),
+    tostring(noStale), tostring(gameBack), tostring(hiddenUnknown), tostring(back), reads, blocked)
 end
 
 -- A guild's name with "Guild names" off, through the whole addon: whole, also with a player's name
@@ -1657,7 +1822,7 @@ def run(toc, look="viewfinder"):
                               "SNAP_FREE", "DONE_OK", "SNAP_RIGHT_CENTER", "SNAP_PIECE",
                               "SNAP_SHIFT", "LAYOUT_ANIM", "ORBIT_CLICKS", "ORBIT_STOPS",
                               "SNAP_MODES", "LIVE_DRAG", "FIRST_EDIT", "PANELS_OPENED",
-                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "EUI_RAID_NAMES", "EUI_RAID_DBG", "LFG_SECRET_OK", "EUI_INTERRUPT_OK", "EUI_INTERRUPT_DBG", "MINIMAP_OK", "MINIMAP_DBG", "CAMERA_ZOOM_OK", "CAMERA_ZOOM_DBG", "CHAPTER_NOTE_OK", "CHAPTER_NOTE_DBG", "EUI_METER_LIST_OK", "EUI_METER_LIST_DBG", "FIXED_ALONE_OK", "FIXED_ALONE_DBG", "GUILD_WINDOW_OK", "GUILD_WINDOW_DBG", "GUILD_MOTD_OK", "GUILD_MOTD_DBG", "GUILD_WHOLE_OK", "GUILD_WHOLE_DBG", "CLUB_SECRET_OK", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "METER_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
+                              "PANEL_CLOSES", "LOCK_OK", "SKIN_SWITCH", "METER_SWEEP", "UNDO_OK", "LEARNED_GUARD", "EUI_RAID_NAMES", "EUI_RAID_DBG", "LFG_SECRET_OK", "EUI_INTERRUPT_OK", "EUI_INTERRUPT_DBG", "MINIMAP_OK", "MINIMAP_DBG", "CAMERA_ZOOM_OK", "CAMERA_ZOOM_DBG", "CHAPTER_NOTE_OK", "CHAPTER_NOTE_DBG", "EUI_METER_LIST_OK", "EUI_METER_LIST_DBG", "FIXED_ALONE_OK", "FIXED_ALONE_DBG", "GUILD_WINDOW_OK", "GUILD_WINDOW_DBG", "GUILD_MOTD_OK", "GUILD_MOTD_DBG", "GUILD_MOTD_SAFE_OK", "GUILD_MOTD_SAFE_DBG", "GUILD_WHOLE_OK", "GUILD_WHOLE_DBG", "CLUB_SECRET_OK", "LFG_OK", "CHECK_OK", "ALLY_OK", "LATE_OK", "TAG_OK", "CAST_OK", "AUDIT_OK", "AUDIT_DBG", "NOTES_OK", "METER_ALIAS_OK", "PERF_OK", "PERF_DBG", "REVIEW_OK", "REVIEW_DBG", "PET_OK", "PET_DBG", "METER_DBG", "OVERHEAD_OK", "OVERHEAD_DBG", "BLANK_PAGE_OK", "STREAM_LEFT")}
 
 
 # One login (or /reload) with the blank name font: what the game's name fonts hold after OnAir's
@@ -1756,6 +1921,9 @@ if __name__ == "__main__":
             motd_ok = results["GUILD_MOTD_OK"]
             print(f"  {'ok  ' if motd_ok else 'FAIL'} the guild's message of the day: hidden everywhere the game shows it, a switch of its own " + str(results["GUILD_MOTD_DBG"]))
             failures += 0 if motd_ok else 1
+            safe_ok = results["GUILD_MOTD_SAFE_OK"]
+            print(f"  {'ok  ' if safe_ok else 'FAIL'} the message of the day where the game keeps it from addons: never asked for there, still hidden " + str(results["GUILD_MOTD_SAFE_DBG"]))
+            failures += 0 if safe_ok else 1
             whole_ok = results["GUILD_WHOLE_OK"]
             print(f"  {'ok  ' if whole_ok else 'FAIL'} a guild's name with its switch off stays whole, and isn't called a leak " + str(results["GUILD_WHOLE_DBG"]))
             failures += 0 if whole_ok else 1

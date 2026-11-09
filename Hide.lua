@@ -1232,22 +1232,80 @@ end
 local GuardedText = Utils.Guard("text", OnText)
 Hide.OnText = GuardedText
 
--- The guild's message of the day as plain text, or nil (none, or the game hides it).
+-- The guild's message of the day. The game keeps it from addons in dungeons, raids, boss fights,
+-- Mythic+ and PvP matches: reading it there (C_GuildInfo.GetMOTD) is a blocked action, which the
+-- game reports even inside pcall. So OnAir keeps a copy: the game's GUILD_MOTD event brings each
+-- new message, the Guild Info tab shows it, and the game is asked only while nothing is restricted.
+local motdText -- the message as plain text; nil: none set
+local motdKnown = false -- motdText is the message as it stands
+
+-- True while the game restricts addons, so reading the message would be blocked.
+local function Restricted()
+    if InCombatLockdown() then
+        return true
+    end
+    local chat = C_ChatInfo and C_ChatInfo.InChatMessagingLockdown
+    if chat then
+        local ok, locked = pcall(chat)
+        if not ok or IsSecret(locked) or locked then
+            return true
+        end
+    end
+    local actions = C_RestrictedActions
+    local kinds = Enum.AddOnRestrictionType
+    local inactive = Enum.AddOnRestrictionState and Enum.AddOnRestrictionState.Inactive
+    if actions and actions.GetAddOnRestrictionState and kinds and inactive then
+        for _, kind in pairs(kinds) do
+            if type(kind) == "number" then
+                local ok, state = pcall(actions.GetAddOnRestrictionState, kind)
+                if not ok or IsSecret(state) or state ~= inactive then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- A message seen as plain text is kept; false: a secret, so it can't be read here.
+local function KeepMotd(text)
+    if type(text) ~= "string" or IsSecret(text) then
+        return false
+    end
+    motdText = text ~= "" and text or nil
+    motdKnown = true
+    return true
+end
+
+-- The guild's message of the day as plain text, or nil (none set). Until the game can be asked
+-- again, the last one known.
 local function GuildMotd()
-    local get = C_GuildInfo and C_GuildInfo.GetMOTD or _G.GetGuildRosterMOTD
-    if type(get) ~= "function" then
-        return nil
+    if not motdKnown and not Restricted() then
+        local get = C_GuildInfo and C_GuildInfo.GetMOTD or _G.GetGuildRosterMOTD
+        if type(get) ~= "function" then
+            KeepMotd("")
+        else
+            local ok, text = pcall(get)
+            if ok then
+                KeepMotd(text)
+            end
+        end
     end
-    local ok, text = pcall(get)
-    if ok and type(text) == "string" and not IsSecret(text) and text ~= "" then
-        return text
-    end
-    return nil
+    return motdText
 end
 Hide.GuildMotd = GuildMotd
 
+-- Each new message, from the game. In those places it comes as a secret: it's read later.
+local motdWatch = CreateFrame("Frame")
+motdWatch:RegisterEvent("GUILD_MOTD")
+motdWatch:SetScript("OnEvent", Utils.Guard("guild message", function(_, _, text)
+    if not KeepMotd(text) then
+        motdKnown = false
+    end
+end))
+
 -- The message of the day in the Guild Info tab: a SimpleHTML, not a label, so it has a hook of its
--- own. Its text can't be read back: the real one comes from the game when it's put back.
+-- own. Its text can't be read back: what's put back is the kept copy of the message.
 local boxChanged = false
 
 local function MotdBox()
@@ -1283,6 +1341,8 @@ local function OnBoxText(box, text)
     if busy or box ~= MotdBox() then
         return
     end
+    -- The game puts the message as it stands in here (also where addons can't ask for it).
+    KeepMotd(text)
     local out = BoxShows(text)
     if out then
         SetBox(box, out)
@@ -1290,18 +1350,26 @@ local function OnBoxText(box, text)
     boxChanged = out ~= nil
 end
 
--- Going live, the broadcast ending, a setting changing: the box as it should be now.
+-- Going live, the broadcast ending, a setting changing: the box as it should be now. A message
+-- not known yet is hidden whatever it says, and isn't put back: the game sets the box again (its
+-- next message, or the Guild Info tab shown again).
 local function UpdateMotdBox()
+    -- First, so the copy is there for tooltips before any window is opened.
+    local real = GuildMotd()
     local box = MotdBox()
     if not box then
         return
     end
-    local real = GuildMotd()
-    local out = BoxShows(real)
+    local out
+    if motdKnown then
+        out = BoxShows(real)
+    elseif Where("guildMotd") then
+        out = L["(hidden)"]
+    end
     if out then
         SetBox(box, out)
         boxChanged = true
-    elseif boxChanged then
+    elseif boxChanged and motdKnown then
         boxChanged = false
         SetBox(box, real or "")
     end
@@ -1313,7 +1381,11 @@ function Hide.MotdState()
     if not Where("guildMotd") then
         return L["switch off"]
     end
-    if not GuildMotd() then
+    local text = GuildMotd()
+    if not motdKnown then
+        return L["unknown for now (the game keeps it from addons in instances and fights)"]
+    end
+    if not text then
         return L["none set"]
     end
     if not MotdBox() then
